@@ -1,0 +1,21 @@
+/* ==========================================================================
+   12 - Print (always light, no menus or buttons)
+   ========================================================================== */
+@page{size:A4 landscape;margin:10mm}
+
+@layer components {
+  @media print{
+    :root,:root[data-theme="dark"],:root:not([data-theme="light"]){
+      color-scheme:light;--bg:#fff;--card:#fff;--field:#fff;--surface-2:#F4F6FA;--surface-3:#EBEFF6;--line:#DDE3EC;--line-2:#BCC6D6;--ink:#101B2E;--mute:#4A566B;--faint:#6B778B;
+      --blue-soft:#E8EEFC;--green-soft:#E3F5EA;--amber-soft:#FFF3D6;--red-soft:#FDE8E9;--blue-ink:#1A47B0;--green-ink:#0E6A38;--amber-ink:#7E4F08;--red-ink:#A5262C;--pos:#0E6A38;--neg:#B42318;
+      --c1:#2158D6;--c2:#E08A00;--c3:#0E9F8A;--c4:#8B5CF6;--c5:#D6407A;--c6:#64748B;--c7:#0891B2;--c8:#0E2350;--hover:#fff;
+    }
+    body{background:#fff;color:#101B2E}
+    .top,.snav,.snav-menu,.sidenav,.btn,.toast{display:none}
+    .split{display:block}
+    .tw{overflow:visible;max-height:none}
+    .tw thead{display:table-header-group}
+    .tw tr{break-inside:avoid}
+    .chart,.card{break-inside:avoid;box-shadow:none}
+  }
+}

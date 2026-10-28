@@ -1,0 +1,60 @@
+/* ==========================================================================
+   6 - Tables (the star of the show)
+   The header colour follows the section accent (--th).
+   Rows marked  tr.sub  = sub-total,  tr.tot  = total.
+   td.num / th.num = number columns.  The first column stays in view when
+   scrolling sideways.
+   ========================================================================== */
+@layer components {
+  .tw{overflow:auto;max-height:var(--twh);background:var(--card);border:1px solid color-mix(in srgb,var(--th) 28%,var(--line));border-radius:18px;box-shadow:0 2px 10px rgba(16,40,100,.06);scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--th) 45%,var(--line-2)) transparent}
+  .tw.nomax{max-height:none}
+  table{border-collapse:separate;border-spacing:0;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums lining-nums}
+  th{position:sticky;top:0;z-index:2;background:color-mix(in srgb,var(--th) 15%,var(--card));color:color-mix(in srgb,var(--th) 72%,var(--ink));text-align:start;padding:12px 13px;font-weight:700;font-size:12.5px;letter-spacing:.01em;border-bottom:3px solid var(--th);white-space:nowrap}
+  th.sortable{cursor:pointer}
+  th.sortable:hover{background:color-mix(in srgb,var(--th) 26%,var(--card));color:color-mix(in srgb,var(--th) 72%,var(--ink))}
+  th.num,td.num{text-align:end}
+  td{padding:9px 13px;border-bottom:1px solid color-mix(in srgb,var(--line) 85%,transparent);white-space:nowrap;max-width:340px;overflow:hidden;text-overflow:ellipsis}
+  .tw td{background:var(--row-bg,var(--card))}
+  tbody tr:last-child td{border-bottom:0}
+  :where(.tw tbody tr:nth-child(even)){--row-bg:color-mix(in srgb,var(--th) 4.5%,var(--card))}
+  tbody tr:hover{--row-bg:var(--hover)}
+  .tw tbody tr:hover{--row-bg:color-mix(in srgb,var(--th) 13%,var(--card))}
+
+  /* sub-total and total rows */
+  tr.sub{--row-bg:color-mix(in srgb,var(--th) 10%,var(--card))}
+  tr.sub td{font-weight:700;border-top:1px solid color-mix(in srgb,var(--th) 45%,var(--line));color:var(--ink)}
+  tr.tot{--row-bg:color-mix(in srgb,var(--th) 22%,var(--card))}
+  tr.tot td{font-weight:600;font-size:14px;border-top:1px solid var(--line-2);border-bottom:2px solid var(--th);color:color-mix(in srgb,var(--th) 72%,var(--ink))}
+  .tw tbody tr.sub:hover{--row-bg:color-mix(in srgb,var(--th) 16%,var(--card))}
+  .tw tbody tr.tot:hover{--row-bg:color-mix(in srgb,var(--th) 28%,var(--card))}
+
+  /* special cells */
+  td.edited{--row-bg:var(--amber-soft)}
+  td.drv{color:color-mix(in srgb,var(--th) 72%,var(--ink));font-weight:600;cursor:pointer}
+  td.drv:hover{text-decoration:underline}
+  td.ed{cursor:text}
+  .tw td.neg,.tw td.pos{font-weight:600}
+
+  /* sticky identifier columns (first column stays visible) */
+  .tw th:first-child,.tw td:first-child{position:sticky;inset-inline-start:0;box-shadow:var(--edge,1px) 0 0 var(--line)}
+  .tw th:first-child,.tw th.s2{z-index:4}
+  .tw td:first-child,.tw td.s2{z-index:1}
+  .tw th.s2,.tw td.s2{position:sticky;inset-inline-start:46px;box-shadow:var(--edge,1px) 0 0 var(--line)}
+  .tw td:first-child{font-weight:600;color:var(--ink)}
+  .tw table.sn th:first-child,.tw table.sn td:first-child{min-width:46px;width:46px;max-width:46px;text-align:end;color:var(--mute);padding-inline-start:6px;padding-inline-end:8px}
+  .tw table.sn td:first-child{font-weight:500}
+  /* statement tables: slim first column */
+  .tw th.s2:first-child,.tw td.s2:first-child{inset-inline-start:0;width:210px;min-width:170px;max-width:240px;white-space:normal;overflow:visible;text-overflow:clip}
+  .tw td.s2:first-child{line-height:1.3}
+  .tw th.yrh{background:color-mix(in srgb,var(--th) 20%,var(--card));border-bottom:1px solid color-mix(in srgb,var(--th) 35%,var(--line))}
+  .tw th.yrh.open{background:color-mix(in srgb,var(--th) 34%,var(--card))}
+  /* financial statement with year / month columns */
+  .stm table{min-width:100%}
+  .stm th.yr{cursor:pointer;white-space:nowrap}
+  .stm th.yr:hover{text-decoration:underline}
+  .stm th.mo,.stm td.mo{font-weight:400;background:color-mix(in srgb,var(--blue) 5%,transparent);font-size:12.5px;white-space:nowrap}
+  .stm td:first-child,.stm th:first-child{position:sticky;inset-inline-start:0;z-index:1;background:var(--card);white-space:nowrap}
+  .stm thead th:first-child{background:var(--card)}
+
+  @media(max-width:700px){ .tw td:first-child{max-width:150px} }
+}

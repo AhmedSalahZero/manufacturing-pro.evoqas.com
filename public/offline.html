@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0B2A78">
+<title>ZAVERO Manufacturing Pro — Offline</title>
+<style>
+  /* Standalone on purpose: this page is shown when nothing else can be loaded. */
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:#F3F5F9;color:#101B2E;font-family:'IBM Plex Sans','IBM Plex Sans Arabic','Segoe UI',Tahoma,system-ui,sans-serif;padding:24px;box-sizing:border-box}
+  main{max-width:420px;text-align:center;background:#fff;border:1px solid #E3E8F0;border-top:4px solid #2563EB;border-radius:16px;padding:32px 28px;box-shadow:0 2px 10px rgba(16,40,100,.06)}
+  img{width:96px;height:96px}
+  h1{font-size:20px;margin:12px 0 6px}
+  p{margin:0 0 6px;color:#556178;line-height:1.55;font-size:14px}
+  p[lang=ar]{direction:rtl}
+  hr{border:0;border-top:1px solid #E3E8F0;margin:16px 0}
+  button{margin-top:16px;height:38px;padding:0 22px;border:0;border-radius:999px;background:#1D4ED8;color:#fff;font:inherit;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+<main>
+  <img src="/images/logo.png" alt="ZAVERO Manufacturing Pro" width="96" height="96">
+  <h1>You are offline</h1>
+  <p>ZAVERO cannot reach the server right now. Check your connection and try again.</p>
+  <hr>
+  <h1 lang="ar" dir="rtl">أنت غير متصل بالإنترنت</h1>
+  <p lang="ar">تعذّر على ZAVERO الوصول إلى الخادم الآن. تحقق من الاتصال ثم أعد المحاولة.</p>
+  <button type="button" onclick="location.reload()">Try again · أعد المحاولة</button>
+</main>
+</body>
+</html>

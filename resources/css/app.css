@@ -1,0 +1,95 @@
+/* ══════════════════════════════════════════════════════════════════
+   ZAVERO Manufacturing Pro — Stylesheet entry point
+   Location: resources/css/app.css
+
+   You normally never edit this file. The look of the application lives in
+   the files inside  resources/css/design/ :
+
+     tokens.css      colours, sizes, spacing, dark mode
+     base.css        page background, text, headings, section colours
+     helpers.css     small helper classes
+     layout.css      page frame, grids
+     navigation.css  top bar, tabs, side menu
+     controls.css    buttons, inputs, badges, forms
+     tables.css      tables
+     cards.css       cards, KPI tiles, notes, empty states
+     charts.css      chart frames and legends
+     widgets.css     drag-and-drop and entry-form widgets
+     dialogs.css     pop-up windows
+     auth.css        sign-in page
+     rtl.css         Arabic (right-to-left) extras
+     print.css       printing
+     utilities.css   spacing helpers
+
+   1. Tailwind CSS v4 (utility classes: flex, gap-3, mt-4 ...)
+   2. The fonts, bundled with the app (no Google call, so they also work
+      offline):  IBM Plex Sans -> English and all numbers
+                 IBM Plex Sans Arabic -> Arabic
+   3. The ZAVERO design system (the approved design, carried over exactly)
+   4. The theme colours exposed to Tailwind, so utilities follow light and
+      dark mode automatically: bg-card, text-ink, border-line ...
+   ══════════════════════════════════════════════════════════════════ */
+
+@import "tailwindcss";
+
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-sans/latin-700.css";
+@import "@fontsource/ibm-plex-sans-arabic/arabic-400.css";
+@import "@fontsource/ibm-plex-sans-arabic/arabic-500.css";
+@import "@fontsource/ibm-plex-sans-arabic/arabic-600.css";
+@import "@fontsource/ibm-plex-sans-arabic/arabic-700.css";
+
+@import "./design/tokens.css";
+@import "./design/base.css";
+@import "./design/helpers.css";
+@import "./design/layout.css";
+@import "./design/navigation.css";
+@import "./design/controls.css";
+@import "./design/tables.css";
+@import "./design/cards.css";
+@import "./design/charts.css";
+@import "./design/widgets.css";
+@import "./design/dialogs.css";
+@import "./design/auth.css";
+@import "./design/rtl.css";
+@import "./design/print.css";
+@import "./design/utilities.css";
+
+/* Tailwind scans these files for the classes we use. */
+@source "../views";
+@source "../js";
+
+/* The theme is the data-theme attribute on <html>: "light" or "dark". */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-card: var(--card);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-field: var(--field);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-ink: var(--ink);
+  --color-mute: var(--mute);
+  --color-faint: var(--faint);
+  --color-navy: var(--navy);
+  --color-brand: var(--blue);
+  --color-brand-soft: var(--blue-soft);
+  --color-brand-ink: var(--blue-ink);
+  --color-ok: var(--green);
+  --color-ok-soft: var(--green-soft);
+  --color-ok-ink: var(--green-ink);
+  --color-warn: var(--amber);
+  --color-warn-soft: var(--amber-soft);
+  --color-warn-ink: var(--amber-ink);
+  --color-bad: var(--red);
+  --color-bad-soft: var(--red-soft);
+  --color-bad-ink: var(--red-ink);
+  --color-pos: var(--pos);
+  --color-neg: var(--neg);
+  --color-accent: var(--sec);
+  --font-sans: var(--font);
+}

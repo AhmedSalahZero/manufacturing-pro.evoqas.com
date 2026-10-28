@@ -1,0 +1,17 @@
+/* ==========================================================================
+   Small helper classes (text colours, number style, hidden-but-readable)
+   ========================================================================== */
+@layer components {
+  .mute{color:var(--mute)}
+  .small{font-size:12.5px}
+  .right{text-align:end}
+  .nowrap{white-space:nowrap}
+  .num,.tile b,input.in,.kpi{font-variant-numeric:tabular-nums lining-nums;font-feature-settings:var(--num)}
+  .neg{color:var(--neg)}
+  .pos{color:var(--pos)}
+  .dim{color:var(--faint)}
+  /* keep a number or code left-to-right inside an Arabic sentence */
+  .ltr{direction:ltr;unicode-bidi:isolate}
+  /* visually hidden, still read by screen readers */
+  .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+}

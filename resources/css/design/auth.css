@@ -1,0 +1,56 @@
+/* ==========================================================================
+   Sign-in page (picture on one side, white form on the other)
+   Set the picture with:  style="--img:url('/images/login.jpg')"
+   ========================================================================== */
+@layer components {
+  body.locked #app,body.locked #modal{display:none}
+  .lg-split{position:fixed;inset:0;z-index:200;display:grid;grid-template-columns:minmax(0,1fr) clamp(290px,23vw,330px);background:#0b1a38}
+  .lg-art{background-image:var(--img,linear-gradient(135deg,#0B2A78 0%,#1747C9 55%,#2F7BFF 100%));background-size:cover;background-position:center center;background-repeat:no-repeat}
+  .lg-art{position:relative;display:flex;flex-direction:column;justify-content:center;overflow:hidden}
+  .lg-pic{position:absolute;inset:0}
+  .lg-art::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(8,20,48,.9) 0%,rgba(8,20,48,.78) 42%,rgba(8,20,48,.3) 70%,rgba(8,20,48,0) 100%)}
+  .lg-copy{position:relative;z-index:1;max-width:min(560px,52%);padding:clamp(18px,4vh,44px) clamp(22px,3.4vw,52px);color:#fff;display:flex;flex-direction:column;gap:clamp(8px,1.6vh,16px)}
+  .lg-eyebrow{margin:0;font-size:clamp(12px,1.1vw,14px);font-weight:700;letter-spacing:.2em;color:#5EEAD4}
+  .lg-copy h2{margin:0;font-size:clamp(26px,3.3vw,46px);line-height:1.1;font-weight:800;letter-spacing:-.02em;color:#fff}
+  .lg-lead{margin:0;font-size:clamp(13px,1.15vw,16px);line-height:1.6;color:rgba(255,255,255,.88)}
+  .lg-feats{list-style:none;margin:clamp(4px,1vh,10px) 0 0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+  .lg-feats li{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.1);backdrop-filter:blur(3px)}
+  .lg-feats b{font-size:clamp(12px,1vw,13.5px);color:#fff}
+  .lg-feats span{font-size:clamp(10.5px,.85vw,12px);line-height:1.35;color:rgba(255,255,255,.75)}
+  .lg-tag{margin:0;font-size:clamp(13px,1.2vw,16px);font-weight:700;color:#fff}
+  .lg-side{display:grid;place-items:center;align-content:center;padding:14px 20px;background:#fff;border-inline-start:1px solid #E3E8F0;overflow-y:auto}
+  .lg-form{width:100%;display:flex;flex-direction:column;gap:4px;color:#101B2E}
+  .lg-form h1{font-size:21px;margin:4px 0 0;color:#101B2E}
+  .lg-sub{font-size:13px}
+  .lg-form .lg-sub{color:#556178;margin:0 0 6px}
+  .lg-form form{display:flex;flex-direction:column;gap:4px}
+  .lg-form label{font-size:12.5px;font-weight:600;margin-top:6px;opacity:.9;color:#101B2E}
+  .lg-form .inp{width:100%;height:40px;background:#fff;color:#101B2E;border:1px solid #CED6E2}
+  .lg-form .lg-btn{margin-top:6px}
+  .lg-btn{height:44px;justify-content:center;font-size:15px}
+  .lg-err{min-height:16px;color:#B42318;font-size:13px}
+  .lg-hint{font-size:12px;opacity:.7;text-align:center;margin:8px 0 0}
+  .lg-wrap{width:100%;max-width:290px}
+  .lg-tools{display:flex;justify-content:flex-end;gap:8px;margin-bottom:4px}
+  .lg-link{color:#1747C9;font-size:13px;font-weight:600;text-decoration:none}
+  .lg-link:hover{text-decoration:underline}
+  .lg-row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .lg-form .lg-check{display:flex;gap:8px;align-items:center;font-size:12.5px;font-weight:400;opacity:1;margin-top:6px;color:#556178}
+  .lg-note{margin-top:12px;margin-bottom:0}
+  .lg-logoimg{width:auto;max-width:100%;height:clamp(110px,26vh,210px);align-self:center;margin-bottom:0;object-fit:contain}
+
+  @media(max-aspect-ratio:3/2){
+    .lg-art{background-size:contain;background-position:center top}
+    .lg-copy{max-width:none}
+    .lg-feats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  }
+  @media(max-height:720px){ .lg-copy{gap:8px;padding-block:14px} .lg-copy h2{font-size:clamp(24px,2.8vw,36px)} .lg-feats{gap:8px} .lg-feats li{padding:7px 10px} .lg-feats span{display:none} }
+  @media(max-height:520px){ .lg-feats,.lg-lead{display:none} }
+  @media(max-width:1100px){ .lg-feats{grid-template-columns:repeat(2,minmax(0,1fr))} .lg-copy{max-width:min(520px,78%)} }
+  @media(max-width:800px){
+    .lg-split{grid-template-columns:1fr;grid-template-rows:34vh 1fr}
+    .lg-art{background-size:cover;background-position:center}
+    .lg-copy{display:none}
+    .lg-side{border-inline-start:0;align-items:start;padding-top:22px}
+  }
+}

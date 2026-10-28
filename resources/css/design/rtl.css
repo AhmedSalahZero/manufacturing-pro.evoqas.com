@@ -1,0 +1,40 @@
+/* ==========================================================================
+   Arabic / right-to-left (RTL)
+   Almost everything flips by itself because the other files use "start" and
+   "end" instead of "left" and "right". This file holds only the few things
+   that need extra care in Arabic. It applies when <html dir="rtl">.
+   ========================================================================== */
+@layer components {
+  :root[dir="rtl"]{--edge:-1px}
+
+  /* Arabic letters join each other: letter-spacing would break the words */
+  :root[dir="rtl"] *,:root[dir="rtl"] *::before,:root[dir="rtl"] *::after{letter-spacing:0}
+  :root[dir="rtl"] body{line-height:1.65}
+
+  /* Numbers always read left-to-right, so "-1,234.5" never turns into "1,234.5-" */
+  :root[dir="rtl"] :is(.num,td.num,th.num,input.in,.kpi,.tile>b,.pin:not(.wide,[data-ty=s],select,textarea),.d-tv,.d-tipv){direction:ltr;unicode-bidi:isolate}
+  :root[dir="rtl"] .tile>b{text-align:right}
+  :root[dir="rtl"] .chart svg{direction:ltr}
+
+  /* drop-down arrows move to the left edge */
+  :root[dir="rtl"] :is(.sel,select.in,.top select.twsel){background-position:left 8px center}
+
+  /* gradients that run along the page */
+  :root[dir="rtl"] .lg-art::before{background:linear-gradient(270deg,rgba(8,20,48,.9) 0%,rgba(8,20,48,.78) 42%,rgba(8,20,48,.3) 70%,rgba(8,20,48,0) 100%)}
+  :root[dir="rtl"] .lg-copy{text-align:start}
+  :root[dir="rtl"] .top{background:linear-gradient(260deg,#0B2A78 0%,#1747C9 50%,#2F7BFF 100%)}
+  :root[dir="rtl"] .top::after{background:linear-gradient(270deg,#38BDF8,#2563EB,#6366F1,#38BDF8,#0EA5E9)}
+  :root[dir="rtl"] .lg-art{background-position:70% center}
+
+  /* arrows */
+  :root[dir="rtl"] .sn-tg-ic{transform:rotate(-45deg)}
+  :root[dir="rtl"] details.fold>summary::before{transform:rotate(45deg)}
+  :root[dir="rtl"] details.fold[open]>summary::before{transform:rotate(-45deg)}
+  @media(min-width:1001px){ :root[dir="rtl"].sn-min .sn-tg-ic{transform:rotate(135deg)} }
+
+  /* pages with a side menu: the tight edge is on the right */
+  :root[dir="rtl"] .wrap:has(.split){padding-left:max(clamp(14px,2vw,28px),env(safe-area-inset-left,0px));padding-right:max(10px,env(safe-area-inset-right,0px))}
+  @media(max-width:600px){
+    :root[dir="rtl"] .tabbar{-webkit-mask-image:linear-gradient(270deg,#000 88%,transparent);mask-image:linear-gradient(270deg,#000 88%,transparent)}
+  }
+}

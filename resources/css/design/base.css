@@ -1,0 +1,48 @@
+/* ==========================================================================
+   2 - Base (page background, text, headings)
+   ========================================================================== */
+@layer base {
+  :root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+  html{scroll-padding-top:calc(var(--topH) + env(safe-area-inset-top,0px) + 12px);-webkit-text-size-adjust:100%}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:var(--font);color:var(--ink);font-size:14px;line-height:1.5;min-height:100%;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    background:
+      radial-gradient(900px 420px at 100% -8%,color-mix(in srgb,var(--sec) 11%,transparent),transparent 70%),
+      radial-gradient(700px 380px at -5% 12%,color-mix(in srgb,var(--k5) 6%,transparent),transparent 70%),
+      var(--bg);
+    background-attachment:fixed;
+  }
+  button,input,select,textarea{font:inherit;color:inherit}
+  button{cursor:pointer}
+  :focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
+  h1,h2,h3,h4,h5{font-family:var(--font);color:var(--ink);line-height:1.25;letter-spacing:-.01em}
+  h1{font-size:2em;font-weight:700}
+  h2{font-size:clamp(24px,2.5vw,31px);font-weight:700;letter-spacing:-.025em;margin-bottom:6px}
+  h3{font-size:17px;font-weight:700;letter-spacing:-.015em;margin-bottom:4px}
+  h4{font-size:14px;font-weight:600;margin-bottom:4px}
+  b,strong{font-weight:600}
+}
+
+/* --------------------------------------------------------------------------
+   Section colours ("accents")
+   Each main section of the app has its own colour. Put data-accent="..." on
+   <body> (or on any block) and headings, cards, table headers, tabs and
+   buttons inside it pick up that colour.
+   blue (default) | violet | green | orange | cyan
+   -------------------------------------------------------------------------- */
+@layer base {
+  body, [data-accent]{
+    --sec-soft:color-mix(in srgb,var(--sec) 13%,var(--card));
+    --sec-ink:color-mix(in srgb,var(--sec) 72%,var(--ink));
+    --sec-btn:color-mix(in srgb,var(--sec) 80%,#000);
+    --sec-2:color-mix(in srgb,var(--sec) 60%,#fff);
+    --th:var(--sec);
+  }
+  [data-accent="blue"]{--sec:#2563EB}
+  [data-accent="violet"]{--sec:#7C3AED}
+  [data-accent="green"]{--sec:#059669}
+  [data-accent="orange"]{--sec:#EA7A0C;--th:#2563EB}
+  [data-accent="cyan"]{--sec:#0891B2}
+}
