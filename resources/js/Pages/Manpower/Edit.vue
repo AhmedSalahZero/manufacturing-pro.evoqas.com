@@ -317,7 +317,9 @@ function save(after) {
 .row.between h3 { margin-bottom: 0; }
 .plan th, .plan td { vertical-align: middle; }
 .plan td { padding: 6px 8px; }
-.c-pos { min-width: 220px; }
+.c-pos { min-width: 340px; width: 30%; }
+/* the box fills its whole column (a text box has no width of its own, so it stayed small) */
+.c-pos .inp { width: 100%; }
 .c-num { min-width: 140px; width: 18%; }
 .c-cnt { min-width: 110px; width: 12%; }
 .c-hire { min-width: 150px; width: 18%; }
@@ -333,7 +335,9 @@ function save(after) {
 .xbtn { border: 0; background: transparent; color: var(--faint); cursor: pointer; border-radius: 8px; padding: 6px 9px; }
 .xbtn:hover { background: var(--red-soft); color: var(--red); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-.hire td { min-width: 104px; }
+.hire td { min-width: 100px; }
+/* a hiring count is a small number: a narrow box, so more months are in view */
+.hire :deep(.cin .inp) { flex: 0 0 62px; width: 62px; text-align: center; }
 .grow { margin-inline-end: auto; }
 .share { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--line-2); }
 .chk { display: flex; gap: 8px; align-items: center; margin: 6px 0 10px; }

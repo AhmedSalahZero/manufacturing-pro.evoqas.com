@@ -94,12 +94,14 @@ const createStudy = () => createForm.post(route('projects.store'), { onSuccess: 
 </template>
 
 <style scoped>
+.home-grid > .card { min-width: 0; }
 .home-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); gap: 16px; align-items: start; }
 @media (max-width: 900px) { .home-grid { grid-template-columns: minmax(0, 1fr); } }
 .recent { list-style: none; margin: 0; padding: 0; }
 .recent-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 0; border-top: 1px solid var(--line); }
 .recent-row:first-child { border-top: 0; }
-.recent-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.recent-main { display: flex; flex-direction: column; gap: 2px; flex: 1 1 240px; min-width: 0; }
+.recent-main a { display: block; overflow-wrap: anywhere; word-break: break-word; }
 .recent-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 .quick-new { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .quick-new label { font-weight: 600; font-size: 13px; }
@@ -107,4 +109,6 @@ const createStudy = () => createForm.post(route('projects.store'), { onSuccess: 
 .quick-row .inp { flex: 1; min-width: 0; }
 .quick-list { display: flex; flex-direction: column; gap: 8px; }
 .quick-list .btn { justify-content: center; }
+/* a long study name wraps inside the button instead of running out of the card */
+.quick-list .btn { height: auto; min-height: 36px; padding-top: 8px; padding-bottom: 8px; white-space: normal; text-align: center; line-height: 1.35; overflow-wrap: anywhere; max-width: 100%; }
 </style>

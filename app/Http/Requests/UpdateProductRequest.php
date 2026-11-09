@@ -8,6 +8,7 @@ use App\Services\ProductPlanService;
 use App\Calculations\CollectionPolicy;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 
 // ══════════════════════════════════════════════════════════════════
@@ -25,7 +26,7 @@ class UpdateProductRequest extends FormRequest
         /** @var Project $project */
         $project = $this->route('project');
 
-        return $this->user()->can('update', $project);
+        return Gate::forUser($this->user())->allows('update', $project);
     }
 
     /** @return array<string,mixed> */

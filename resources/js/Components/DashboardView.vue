@@ -2,7 +2,7 @@
   ZAVERO Manufacturing Pro — DashboardView (the dashboard of a study, read-only)
   Location: resources/js/Components/DashboardView.vue
   Four KPI tiles (IRR, NPV, payback, total investment), then five tabs: Overview (revenue, growth, required investment),
-  Profitability, Costs, Value (discounted cash flow) and Ratios (liquidity and activity).
+  Profitability, Costs, Value (discounted cash flow, with the Investment Structure card beside the free cash flow chart) and Ratios (liquidity and activity).
   Used by the signed-in dashboard, the public sharing-link page and the printable report (`all` shows every tab one after the other).
   Data: App\Services\DashboardService::present().
 -->
@@ -75,7 +75,7 @@ const profitCharts = [
 ];
 const costKeys = ['raw_material', 'direct_labor', 'manufacturing_overheads', 'marketing', 'sales', 'general'];
 
-const dcfRows = ['ebit', 'taxes', 'depreciation', 'working_capital', 'capex', 'free_cash_flow', 'wacc', 'terminal_value', 'with_terminal', 'discount_factor', 'discounted'];
+const dcfRows = ['ebit', 'taxes', 'depreciation', 'working_capital', 'capex', 'free_cash_flow', 'terminal_value', 'with_terminal', 'wacc', 'discount_factor', 'discounted'];
 const dcfCell = (key, i) => {
     const v = d.value.dcf[key][i];
 
@@ -93,6 +93,19 @@ const summary = computed(() => {
         { key: 'irr', value: k.irr === null ? t('dashboard.noIrr') : `${n1(k.irr)}%`, accent: '--k1' },
         { key: 'payback', value: k.payback.months === null ? t('dashboard.never') : t('dashboard.paybackValue', { years: n1(k.payback.years), date: k.payback.date }), accent: '--k2' },
         { key: 'terminalShare', value: share === null ? '-' : `${n1(share)}%`, accent: '--k6' },
+    ];
+});
+
+// An existing company: Equity value = NPV (the enterprise value) + cash and bank at the opening − loans outstanding at the opening.
+const bridge = computed(() => {
+    const val = d.value.valuation;
+    if (!val || !val.applies) return null;
+
+    return [
+        { key: 'npv', value: n0(d.value.kpi.npv), accent: '--k1' },
+        { key: 'cash', value: n0(val.cash), accent: '--k2' },
+        { key: 'loans', value: n0(val.loans), accent: '--k5' },
+        { key: 'equity_value', value: n0(val.equity_value), accent: val.equity_value < 0 ? '--k4' : '--k3' },
     ];
 });
 
@@ -222,7 +235,27 @@ const ratioCell = (key, digits, mark, i) => `${formatNumber(d.value.ratios[key][
                 </div>
             </div>
             <p class="mute small">{{ t('dashboard.dcf.summaryNote') }}</p>
-            <ZChart :title="t('dashboard.dcf.rows.free_cash_flow')" :labels="labels" :series="[{ name: t('dashboard.dcf.rows.free_cash_flow'), kind: 'bar', values: d.dcf.free_cash_flow, color: 'var(--c4)' }]" />
+            <template v-if="bridge">
+                <h3 class="sumhead">{{ t('dashboard.dcf.equityTitle') }}</h3>
+                <div class="tiles" data-valuation="equity">
+                    <div v-for="tile in bridge" :key="tile.key" class="tile" :style="{ '--tc': `var(${tile.accent})` }" :data-equity="tile.key">
+                        <span>{{ t(`dashboard.dcf.equity.${tile.key}`) }}</span><b dir="ltr">{{ tile.value }}</b>
+                    </div>
+                </div>
+                <p class="mute small">{{ t('dashboard.dcf.equityNote') }}</p>
+            </template>
+            <div class="valgrid" data-valuation="chartrow">
+                <section class="invcard" data-investment="structure">
+                    <h4>{{ t('dashboard.investment.structure') }}</h4>
+                    <div v-for="item in investment" :key="item.key" class="invrow" :style="{ '--tc': `var(${item.accent})` }" :data-invest="item.key">
+                        <span class="invlabel">{{ t(`dashboard.investment.${item.key}`) }}</span>
+                        <span class="invvalue"><b dir="ltr">{{ n0(item.value) }}</b><em v-if="currency">{{ currency }}</em></span>
+                    </div>
+                </section>
+                <div class="valchart">
+                    <ZChart :title="t('dashboard.dcf.rows.free_cash_flow')" :labels="labels" :series="[{ name: t('dashboard.dcf.rows.free_cash_flow'), kind: 'bar', values: d.dcf.free_cash_flow, color: 'var(--c4)' }]" />
+                </div>
+            </div>
         </section>
     </div>
 </template>
@@ -231,6 +264,18 @@ const ratioCell = (key, digits, mark, i) => `${formatNumber(d.value.ratios[key][
 .pgrid { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(300px, 1.4fr); gap: 0 16px; align-items: center; margin-bottom: 8px; }
 @media (max-width: 860px) { .pgrid { grid-template-columns: 1fr; } }
 .sumhead { margin-top: 18px; }
+/* Valuation: the Investment Structure card takes 4 of 12 parts, the free cash flow bar chart 8 */
+.valgrid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; align-items: start; margin-top: 14px; }
+.valgrid > .invcard { grid-column: span 4; }
+.valgrid > .valchart { grid-column: span 8; min-width: 0; }
+@media (max-width: 860px) { .valgrid > .invcard, .valgrid > .valchart { grid-column: span 12; } }
+.invcard { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid color-mix(in srgb, var(--k1) 30%, var(--line)); border-top: 4px solid var(--k1); border-radius: var(--r-md); background: color-mix(in srgb, var(--k1) 4%, var(--card)); }
+.invcard h4 { margin: 0 0 2px; font-size: 15px; }
+.invrow { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--tc) 40%, var(--line)); border-inline-start: 5px solid var(--tc); border-radius: var(--r-sm); background: var(--card); }
+.invlabel { font-size: 12.5px; color: var(--mute); overflow-wrap: anywhere; }
+.invvalue { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.invvalue b { font-size: 21px; font-weight: 700; letter-spacing: -.02em; color: color-mix(in srgb, var(--tc) 70%, var(--ink)); overflow-wrap: anywhere; }
+.invvalue em { font-style: normal; font-size: 12px; font-weight: 700; color: var(--blue); }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
 @media (max-width: 860px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
 .col { min-width: 0; }

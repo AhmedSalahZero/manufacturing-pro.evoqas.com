@@ -51,7 +51,7 @@ class HomeController extends Controller
                 'studies'      => $visibleIds->count(),
                 'shared'       => (clone $query)->where('user_id', '!=', $me->id)->count(),
                 'edited_week'  => (clone $query)->where('updated_at', '>=', now()->subDays(7))->count(),
-                'open_links'   => SharingLink::whereIn('project_id', $visibleIds)->where('closed', false)->count(),
+                'open_links'   => SharingLink::whereIn('project_id', $visibleIds)->where('closed', false)->where(fn ($q) => $q->whereNull('expires_at')->orWhereDate('expires_at', '>=', today()))->count(),
             ],
             'recent' => $recent,
         ]);

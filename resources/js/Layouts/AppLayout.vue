@@ -2,7 +2,8 @@
   ZAVERO Manufacturing Pro — AppLayout (every signed-in screen)
   Location: resources/js/Layouts/AppLayout.vue
   The approved top bar with the logo, the section tabs and the person's tools
-  (language, theme, sign out), the second bar with the pages of the study (only inside a study), then the screen itself. Also shows:
+  (language, theme, sign out), the second bar with the pages of the study (only inside a study), then the screen itself.
+  A visitor of a public sharing link (no account) gets a slim bar instead: logo, "read only" badge, language / theme, and the study bar. Also shows:
     · a notice while the device is offline;
     · a notice when a new version of the app is ready ("Update now").
   Each section's colour comes from data-accent on <body> (see resources/css/design/base.css).
@@ -28,9 +29,10 @@ const props = defineProps({
 const { t } = useI18n();
 const { online } = useOnline();
 const page = usePage();
-const user = computed(() => page.props.auth.user);
-const tabs = computed(() => sectionsFor(user.value.role));
-const company = computed(() => user.value.company);
+const isPublic = computed(() => !!page.props.public);
+const user = computed(() => page.props.auth?.user ?? null);
+const tabs = computed(() => (user.value ? sectionsFor(user.value.role) : []));
+const company = computed(() => user.value?.company ?? null);
 const study = computed(() => page.props.study ?? null);
 const endingSoon = computed(() => company.value && !company.value.read_only && company.value.days_left !== null && company.value.days_left <= 30);
 
@@ -45,19 +47,27 @@ const signOut = () => router.post(route('logout'));
 
     <header class="top">
         <div class="wrap">
-            <Link :href="route('home')" class="brand" style="color:inherit;text-decoration:none">
+            <span v-if="isPublic" class="brand" style="color:inherit" data-public-bar>
+                <span class="logo-pill"><img src="/images/logo-mark.png" :alt="t('app.name')" width="30" height="30"></span>
+                <span class="brand-t">{{ t('app.name') }}</span>
+            </span>
+            <Link v-else :href="route('home')" class="brand" style="color:inherit;text-decoration:none">
                 <span class="logo-pill"><img src="/images/logo-mark.png" :alt="t('app.name')" width="30" height="30"></span>
                 <span class="brand-t">{{ t('app.name') }}</span>
             </Link>
 
-            <nav class="tabbar" :aria-label="t('nav.main')">
+            <nav v-if="!isPublic" class="tabbar" :aria-label="t('nav.main')">
                 <Link
                     v-for="s in tabs" :key="s.key" :href="route(s.route)" as="button"
                     :class="{ on: s.key === active }" :aria-current="s.key === active ? 'page' : undefined"
                 >{{ t(s.label) }}</Link>
             </nav>
 
-            <div class="topr">
+            <div v-if="isPublic" class="topr">
+                <span class="vbadge"><b>{{ page.props.public?.kind === 'fill' ? t('fill.badge') : t('shared.badge') }}</b></span>
+                <LangThemeSwitch />
+            </div>
+            <div v-else-if="user" class="topr">
                 <div class="vbadge"><b>{{ user.name }}</b>{{ company ? `${company.name} · ` : '' }}{{ user.email }}</div>
                 <LangThemeSwitch />
                 <button type="button" class="btn btn-line sm" @click="signOut"><AppIcon name="logout" :size="14" />{{ t('common.signOut') }}</button>

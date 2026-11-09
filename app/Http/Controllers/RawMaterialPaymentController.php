@@ -65,7 +65,7 @@ class RawMaterialPaymentController extends Controller
                 ];
             })->values(),
             'lastProduct' => $lastProduct,
-            'readOnly'    => ! $request->user()->can('update', $project),
+            'readOnly'    => Gate::forUser($request->user())->denies('update', $project),
             'options'     => ['dueDays' => CollectionPolicy::DUE_DAYS],
         ]);
     }

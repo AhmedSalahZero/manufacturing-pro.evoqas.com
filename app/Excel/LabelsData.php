@@ -641,7 +641,7 @@ return [
     'cf.out' => ['Total cash out', 'إجمالي النقد الخارج'],
     'cf.beg' => ['Opening cash', 'النقد أول الشهر'],
     'cf.net' => ['Cash before owners\' injection', 'النقد قبل ضخ الملاك'],
-    'cf.inj' => ['Owners\' injection (working capital)', 'ضخ الملاك (رأس المال العامل)'],
+    'cf.inj' => ['Extra Equity Injection', 'ضخ حقوق ملكية إضافية'],
     'cf.injNote' => ['Keeps cash from going below zero', 'يمنع هبوط النقد عن الصفر'],
     'cf.end' => ['Closing cash', 'النقد آخر الشهر'],
     'bs.title' => ['Balance Sheet', 'الميزانية'],

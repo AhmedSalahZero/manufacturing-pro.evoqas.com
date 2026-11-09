@@ -5,7 +5,8 @@
   Server side: App\Http\Controllers\DashboardController (numbers from App\Services\DashboardService).
 -->
 <script setup>
-import { Link, useForm } from '@inertiajs/vue3';
+import { computed } from 'vue';
+import { Link, useForm, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import DashboardView from '@/Components/DashboardView.vue';
 import { useI18n } from '@/lang/i18n';
@@ -19,6 +20,7 @@ const props = defineProps({
 });
 
 const { t } = useI18n();
+const isPublic = computed(() => !!usePage().props.public);   // a visitor of a public sharing link has no report
 const notes = useForm({ one: props.comments.one ?? '', two: props.comments.two ?? '' });
 const saveNotes = () => notes.put(route('projects.dashboard.comments', props.project.id), { preserveScroll: true });
 </script>
@@ -32,7 +34,7 @@ const saveNotes = () => notes.put(route('projects.dashboard.comments', props.pro
             </div>
             <div v-if="ready" class="toolbar">
                 <Link :href="route('projects.sensitivity', project.id)" class="btn btn-line sm">{{ t('dashboard.toSensitivity') }}</Link>
-                <Link :href="route('projects.report', project.id)" class="btn btn-line sm">{{ t('dashboard.toReport') }}</Link>
+                <Link v-if="!isPublic" :href="route('projects.report', project.id)" class="btn btn-line sm">{{ t('dashboard.toReport') }}</Link>
             </div>
         </div>
 

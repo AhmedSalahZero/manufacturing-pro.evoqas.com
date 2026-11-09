@@ -19,6 +19,7 @@ use Inertia\Middleware;
 //    flash      → success / error / warning / info messages
 //    study      → on every page of a study: its id, name, kind (new / existing company), whether it has raw materials and its
 //                 products (id, name) for the second top bar; null everywhere else
+//    public     → on the pages opened from a public sharing link: { code, name, kind } of the link (kind = view | fill) (a visitor has no account), else null
 //    locale     → 'en' | 'ar' for this request
 //    timezone   → the application's time zone
 //    app        → name and environment
@@ -60,6 +61,8 @@ class HandleInertiaRequests extends Middleware
 
             'study'    => fn () => self::studyFor($request),
 
+            'public'   => fn () => ($link = $request->attributes->get('public_link')) ? ['code' => $link->link_code, 'name' => $link->name, 'kind' => $link->type] : null,
+
             'locale'   => fn () => app()->getLocale(),
             'timezone' => config('app.timezone'),
 
@@ -75,7 +78,7 @@ class HandleInertiaRequests extends Middleware
     {
         $project = $request->route('project');
 
-        if (! $project instanceof Project || ! $request->user()) {
+        if (! $project instanceof Project || (! $request->user() && ! $request->attributes->has('public_link'))) {
             return null;
         }
 

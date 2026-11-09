@@ -8,7 +8,7 @@
 -->
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue';
-import { Link, useForm } from '@inertiajs/vue3';
+import { Link, useForm, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import ConfirmDialog from '@/Components/ConfirmDialog.vue';
 import MonthYearInput from '@/Components/MonthYearInput.vue';
@@ -25,6 +25,10 @@ const props = defineProps({
 });
 
 const { t, isAr } = useI18n();
+// A visitor of a public sharing link only looks: no way back to the list of studies, no report, no links page.
+const isPublic = computed(() => !!usePage().props.public);
+// A customer of a "fill" link fills in the input pages; the three rates stay the owner's (shown, not editable) and the results are not his.
+const isFill = computed(() => usePage().props.public?.kind === 'fill');
 
 // The next steps: what to fill in (numbered, in order), what to look at, and sharing. Each card says in a line what the page is for.
 const stepGroups = computed(() => {
@@ -48,12 +52,12 @@ const stepGroups = computed(() => {
             { id: 'statements', href: to('projects.statements'), title: t('projects.form.stepsStatements'), desc: t('projects.form.desc.statements') },
             { id: 'dashboard', href: to('projects.dashboard'), title: t('projects.form.stepsDashboard'), desc: t('projects.form.desc.dashboard') },
             { id: 'sensitivity', href: to('projects.sensitivity'), title: t('projects.form.stepsSensitivity'), desc: t('projects.form.desc.sensitivity') },
-            { id: 'report', href: to('projects.report'), title: t('projects.form.stepsReport'), desc: t('projects.form.desc.report') },
+            ...(isPublic.value ? [] : [{ id: 'report', href: to('projects.report'), title: t('projects.form.stepsReport'), desc: t('projects.form.desc.report') }]),
         ] },
-        { key: 'share', accent: '--k2', items: [
+        ...(isPublic.value ? [] : [{ key: 'share', accent: '--k2', items: [
             { id: 'links', href: to('projects.links'), title: t('projects.form.stepsLinks'), desc: t('projects.form.desc.links') },
-        ] },
-    ];
+        ] }]),
+    ].filter((group) => !(isFill.value && group.key !== 'build'));
 });
 
 const now = new Date();
@@ -158,7 +162,7 @@ const invalid = (path) => Boolean(form.errors[path]);
         <div class="pagehead">
             <div>
                 <h2>{{ project.name }}</h2>
-                <p class="lead mb0">
+                <p v-if="!isPublic" class="lead mb0">
                     <Link :href="route('projects.index')">← {{ t('projects.form.back') }}</Link>
                 </p>
             </div>
@@ -246,18 +250,18 @@ const invalid = (path) => Boolean(form.errors[path]);
                     </div>
                     <div class="fld">
                         <label for="f-tax">{{ t('projects.form.taxRate') }}</label>
-                        <input id="f-tax" v-model="form.tax_rate" class="inp" dir="ltr" type="number" step="any" min="0" max="100" :aria-invalid="invalid('tax_rate')">
+                        <input id="f-tax" v-model="form.tax_rate" class="inp" dir="ltr" type="number" step="any" min="0" max="100" :disabled="isFill" :aria-invalid="invalid('tax_rate')">
                         <span v-if="form.errors.tax_rate" class="dng small" role="alert">{{ form.errors.tax_rate }}</span>
                     </div>
                     <div class="fld">
                         <label for="f-return">{{ t('projects.form.returnRate') }}</label>
-                        <input id="f-return" v-model="form.return_rate" class="inp" dir="ltr" type="number" step="any" min="0" max="100" :disabled="!returnEnabled" :aria-invalid="invalid('return_rate')">
+                        <input id="f-return" v-model="form.return_rate" class="inp" dir="ltr" type="number" step="any" min="0" max="100" :disabled="!returnEnabled || isFill" :aria-invalid="invalid('return_rate')">
                         <span v-if="!returnEnabled" class="mute small">{{ t('projects.form.returnRateHint') }}</span>
                         <span v-if="form.errors.return_rate" class="dng small" role="alert">{{ form.errors.return_rate }}</span>
                     </div>
                     <div class="fld">
                         <label for="f-perpetual">{{ t('projects.form.perpetual') }}</label>
-                        <input id="f-perpetual" v-model="form.perpetual_growth_rate" class="inp" dir="ltr" type="number" step="any" min="0" max="10" :disabled="!perpetualEnabled" :aria-invalid="invalid('perpetual_growth_rate')">
+                        <input id="f-perpetual" v-model="form.perpetual_growth_rate" class="inp" dir="ltr" type="number" step="any" min="0" max="10" :disabled="!perpetualEnabled || isFill" :aria-invalid="invalid('perpetual_growth_rate')">
                         <span class="mute small">{{ t('projects.form.perpetualHint') }}</span>
                         <span v-if="form.errors.perpetual_growth_rate" class="dng small" role="alert">{{ form.errors.perpetual_growth_rate }}</span>
                     </div>
@@ -368,7 +372,7 @@ const invalid = (path) => Boolean(form.errors[path]);
             <div class="toolbar">
                 <button v-if="!readOnly" type="submit" class="btn" :disabled="form.processing">{{ form.processing ? t('projects.form.saving') : t('projects.form.save') }}</button>
                 <button v-if="!readOnly" type="button" class="btn btn-line" :disabled="form.processing" @click="save('list')">{{ t('projects.form.saveClose') }}</button>
-                <Link :href="route('projects.index')" class="btn btn-line">{{ t('common.cancel') }}</Link>
+                <Link v-if="!isPublic" :href="route('projects.index')" class="btn btn-line">{{ t('common.cancel') }}</Link>
             </div>
         </form>
 

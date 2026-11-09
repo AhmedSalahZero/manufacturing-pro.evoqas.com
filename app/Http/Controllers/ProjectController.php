@@ -7,6 +7,8 @@ use App\Http\Requests\StoreProjectRequest;
 use App\Http\Requests\UpdateProjectRequest;
 use App\Models\BusinessSector;
 use App\Models\Project;
+use App\Models\SharingLink;
+use App\Models\SharingLinkVisitor;
 use App\Models\User;
 use App\Services\ProjectService;
 use App\Support\StudyCalendar;
@@ -49,7 +51,13 @@ class ProjectController extends Controller
             $query->where(fn ($q) => $q->where('user_id', $me->id)->orWhereHas('shares', fn ($s) => $s->where('user_id', $me->id)));
         }
 
-        $studies = $query->latest('id')->get()->map(function (Project $p) use ($me) {
+        $projects = $query->latest('id')->get();
+
+        // The "fill" link of each study (the Share template button): the newest one, with its status and expiry date.
+        $fillLinks = SharingLink::whereIn('project_id', $projects->pluck('id'))->where('type', SharingLink::FILL)->orderByDesc('id')->get()->groupBy('project_id');
+        $visits = SharingLinkVisitor::whereIn('link_code', $fillLinks->flatten()->pluck('link_code'))->get()->groupBy('link_code');
+
+        $studies = $projects->map(function (Project $p) use ($me, $fillLinks, $visits) {
             $access = $p->accessFor($me);
             $canShare = in_array($access, ['owner', 'admin'], true);
 
@@ -68,6 +76,7 @@ class ProjectController extends Controller
                 'can_delete'  => $canShare,
                 'can_excel'   => $p->products_count > 0 && $p->start_date !== null && (int) $p->duration > 0,
                 'shared_with' => $p->shares->count(),
+                'fill_link'   => $canShare && ($fill = $fillLinks->get($p->id)?->first()) ? SharingLinkController::present($fill, $visits->get($fill->link_code, collect())) : null,
                 'shares'      => $canShare ? $p->shares->map(fn ($s) => ['user_id' => $s->user_id, 'can_edit' => $s->can_edit])->values() : [],
             ];
         });
@@ -98,7 +107,7 @@ class ProjectController extends Controller
                 'id'                       => $project->id,
                 'name'                     => $project->name,
                 'completed'                => $project->is_completed,
-                'owner'                    => $project->user?->name,
+                'owner'                    => request()->attributes->has('public_link') ? null : $project->user?->name,
                 'new_company'              => $project->new_company,
                 'main_functional_currency' => $project->main_functional_currency ?: $study['default_currency'],
                 'intro_paragraph'          => $project->intro_paragraph,
@@ -126,7 +135,7 @@ class ProjectController extends Controller
                 'vat_rate'                   => $m->vat_rate,
                 'withhold_tax_rate'          => $m->withhold_tax_rate,
             ])->values(),
-            'readOnly' => ! $request->user()->can('update', $project),
+            'readOnly' => Gate::forUser($request->user())->denies('update', $project),
             'sectors' => BusinessSector::orderBy('id')->get(['id', 'name_en', 'name_ar']),
             'options' => [
                 'currencies'       => $study['currencies'],

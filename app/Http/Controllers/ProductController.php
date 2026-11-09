@@ -103,7 +103,7 @@ class ProductController extends Controller
             'rawMaterials' => $project->rawMaterials()->orderBy('id')->get(['id', 'name', 'measurement_unit'])->values(),
             'nextProduct'  => $project->products()->where('id', '>', $product->id)->orderBy('id')->value('id'),
             'results'      => $this->results($project, $product, $years, $startYear),
-            'readOnly'     => ! $request->user()->can('update', $project),
+            'readOnly'     => Gate::forUser($request->user())->denies('update', $project),
             'options'      => ['dueDays' => CollectionPolicy::DUE_DAYS, 'coverageDays' => ProductPlanService::FG_COVERAGE_DAYS],
         ]);
     }

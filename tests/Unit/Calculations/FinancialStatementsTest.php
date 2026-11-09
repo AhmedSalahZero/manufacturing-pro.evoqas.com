@@ -280,7 +280,7 @@ class FinancialStatementsTest extends TestCase
 
             $c = F::cashFlow($case['cash']);
             $this->assertSeries($case['expected_cash']['cash_end_balance'], $c['end_balance'], "$label cash at the end");
-            $this->assertSeries($case['expected_cash']['working_capital_injection'], $c['injection'], "$label owners' top-up");
+            $this->assertSeries($case['expected_cash']['working_capital_injection'], $c['injection'], "$label extra equity injection");
             $this->assertSeries($case['expected_cash']['total_cash_out'], $c['cash_out'], "$label total cash out");
 
             $b = F::balanceSheet($case['balance_in']);

@@ -29,7 +29,7 @@ defineProps({ single: { type: Boolean, default: false } });
     margin-bottom: 0;
 }
 .pair :deep(.terms.later) {
-    border-inline-start: 3px solid var(--blue);
+    border-inline-start: 3px solid var(--sec);
     border-start-start-radius: 0;
     border-end-start-radius: 0;
 }
@@ -43,7 +43,7 @@ defineProps({ single: { type: Boolean, default: false } });
     }
     .pair :deep(.terms.later) {
         border-inline-start: 1px solid var(--line);
-        border-top: 3px solid var(--blue);
+        border-top: 3px solid var(--sec);
         border-radius: var(--r-md);
     }
 }

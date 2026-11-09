@@ -89,7 +89,7 @@ class ExpenseController extends Controller
             })->values(),
             'results'    => $this->results($rows, $this->calculations->timeline($project)),
             'options'    => ['dueDays' => CostPlanService::EXPENSE_DUE_DAYS, 'slots' => $slots],
-            'readOnly'   => ! $request->user()->can('update', $project),
+            'readOnly'   => Gate::forUser($request->user())->denies('update', $project),
         ]);
     }
 

@@ -44,10 +44,48 @@ Route::post('/csp-report', CspReportController::class)->name('csp.report');
 // Language and theme: also used by guests on the sign-in page (kept in the session).
 Route::post('/preferences', [PreferenceController::class, 'update'])->name('preferences.update');
 
-// A study shared by a public link: no sign-in, read-only (see App\Http\Controllers\PublicStudyController).
+// A study shared by a public link: no sign-in, read-only. This address opens the first page of the study (see App\Http\Controllers\PublicStudyController).
 Route::get('/shared/{code}', [PublicStudyController::class, 'show'])->middleware('throttle:60,1')->name('shared.show');
 
-// ── Signed-in area ────────────────────────────────────────────────
+// The pages of a study opened from a public sharing link: no sign-in, looking only (see App\Http\Middleware\PublicLink).
+// They are the same pages and controllers as inside the app; only GET addresses exist here, so nothing can be saved.
+// The report, the links of the study and everything of the company stay behind sign-in.
+Route::middleware(['public-link:view', 'throttle:120,1'])->prefix('shared/{code}')->name('shared.')->group(function () {
+    Route::get('/projects/{project}/edit', [ProjectController::class, 'edit'])->name('projects.edit');
+    Route::get('/projects/{project}/products/{product}/edit', [ProductController::class, 'edit'])->scopeBindings()->name('projects.products.edit');
+    Route::get('/projects/{project}/raw-materials', [RawMaterialPaymentController::class, 'edit'])->name('projects.raw-materials.edit');
+    Route::get('/projects/{project}/manpower', [ManpowerController::class, 'edit'])->name('projects.manpower.edit');
+    Route::get('/projects/{project}/expenses', [ExpenseController::class, 'edit'])->name('projects.expenses.edit');
+    Route::get('/projects/{project}/fixed-assets', [FixedAssetController::class, 'edit'])->name('projects.assets.edit');
+    Route::get('/projects/{project}/opening-balances', [OpeningBalanceController::class, 'edit'])->name('projects.opening.edit');
+    Route::get('/projects/{project}/statements', [StatementsController::class, 'show'])->name('projects.statements');
+    Route::get('/projects/{project}/dashboard', [DashboardController::class, 'show'])->name('projects.dashboard');
+    Route::get('/projects/{project}/sensitivity', [SensitivityController::class, 'show'])->name('projects.sensitivity');
+});
+
+// A study opened from a "fill" link (the Share template button): the customer fills in the input pages and saves them straight into the
+// study (see App\Http\Middleware\PublicLink). Only the input pages exist here: no statements, dashboard, what-if, report or links.
+Route::get('/fill/{code}', [PublicStudyController::class, 'fill'])->middleware('throttle:60,1')->name('fill.show');
+Route::middleware(['public-link:fill', 'throttle:240,1'])->prefix('fill/{code}')->name('fill.')->group(function () {
+    Route::get('/thanks', [PublicStudyController::class, 'thanks'])->name('thanks');
+
+    Route::get('/projects/{project}/edit', [ProjectController::class, 'edit'])->name('projects.edit');
+    Route::put('/projects/{project}', [ProjectController::class, 'update'])->name('projects.update');
+    Route::get('/projects/{project}/products/{product}/edit', [ProductController::class, 'edit'])->scopeBindings()->name('projects.products.edit');
+    Route::put('/projects/{project}/products/{product}', [ProductController::class, 'update'])->scopeBindings()->name('projects.products.update');
+    Route::get('/projects/{project}/raw-materials', [RawMaterialPaymentController::class, 'edit'])->name('projects.raw-materials.edit');
+    Route::put('/projects/{project}/raw-materials', [RawMaterialPaymentController::class, 'update'])->name('projects.raw-materials.update');
+    Route::get('/projects/{project}/manpower', [ManpowerController::class, 'edit'])->name('projects.manpower.edit');
+    Route::put('/projects/{project}/manpower', [ManpowerController::class, 'update'])->name('projects.manpower.update');
+    Route::get('/projects/{project}/expenses', [ExpenseController::class, 'edit'])->name('projects.expenses.edit');
+    Route::put('/projects/{project}/expenses', [ExpenseController::class, 'update'])->name('projects.expenses.update');
+    Route::get('/projects/{project}/fixed-assets', [FixedAssetController::class, 'edit'])->name('projects.assets.edit');
+    Route::put('/projects/{project}/fixed-assets', [FixedAssetController::class, 'update'])->name('projects.assets.update');
+    Route::get('/projects/{project}/opening-balances', [OpeningBalanceController::class, 'edit'])->name('projects.opening.edit');
+    Route::put('/projects/{project}/opening-balances', [OpeningBalanceController::class, 'update'])->name('projects.opening.update');
+});
+
+// ── Signed-in area ────────────────────────────────────────────────────────────────
 // A company whose subscription ended is read-only: 'read-only' refuses every change (looking is always allowed).
 Route::middleware(['auth', 'active', 'no-duplicate', 'read-only'])->group(function () {
     Route::get('/home', HomeController::class)->name('home');
@@ -102,6 +140,7 @@ Route::middleware(['auth', 'active', 'no-duplicate', 'read-only'])->group(functi
         Route::get('/projects/{project}/links', [SharingLinkController::class, 'index'])->name('projects.links');
         Route::post('/projects/{project}/links', [SharingLinkController::class, 'store'])->name('projects.links.store');
         Route::put('/projects/{project}/links/{link}/toggle', [SharingLinkController::class, 'toggle'])->name('projects.links.toggle');
+        Route::put('/projects/{project}/links/{link}/expiry', [SharingLinkController::class, 'expiry'])->name('projects.links.expiry');
         Route::delete('/projects/{project}/links/{link}', [SharingLinkController::class, 'destroy'])->name('projects.links.destroy');
 
         // The people of my company (company administrator only).

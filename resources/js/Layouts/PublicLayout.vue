@@ -1,5 +1,5 @@
 <!--
-  ZAVERO Manufacturing Pro — PublicLayout (the page behind a public sharing link)
+  ZAVERO Manufacturing Pro — PublicLayout (the "closed" page of a public sharing link; the pages of the study itself use AppLayout in its slim public mode)
   Location: resources/js/Layouts/PublicLayout.vue
   A slim top bar with the logo, "read only" badge and the language / theme switch. No menus, no sign-in: a visitor only looks.
 -->

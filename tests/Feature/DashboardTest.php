@@ -2,8 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Models\CashAndBankOpeningBalance;
 use App\Models\Company;
 use App\Models\IncomeStatement;
+use App\Models\LongTermLoanOpeningBalance;
 use App\Models\User;
 use App\Services\ProjectService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -110,6 +112,33 @@ class DashboardTest extends TestCase
             $this->assertEqualsWithDelta($expected, $d['free_cash_flow'][$i], 0.01, "year $i");
         }
         $this->assertEqualsWithDelta(0.0, $d['terminal_value'][0], 0.01, 'the terminal value sits in the last year only');
+    }
+
+    public function test_a_new_company_has_no_equity_value_bridge(): void
+    {
+        $project = $this->study();
+        $d = $this->props($this->actingAs($this->owner)->get(route('projects.dashboard', $project)))['dashboard'];
+
+        $this->assertFalse($d['valuation']['applies']);
+        $this->assertEqualsWithDelta(0.0, $d['valuation']['cash'], 0.001);
+        $this->assertEqualsWithDelta(0.0, $d['valuation']['loans'], 0.001);
+        $this->assertEqualsWithDelta($d['kpi']['npv'], $d['valuation']['equity_value'], 0.01, 'nothing to add or take away');
+    }
+
+    public function test_equity_value_of_an_existing_company_is_npv_plus_opening_cash_minus_opening_loans(): void
+    {
+        $project = $this->study(false);
+        CashAndBankOpeningBalance::create(['project_id' => $project->id, 'cash_and_bank_amount' => 10000]);
+        LongTermLoanOpeningBalance::create(['project_id' => $project->id, 'amount' => 4000]);
+
+        $d = $this->props($this->actingAs($this->owner)->get(route('projects.dashboard', $project)))['dashboard'];
+
+        $this->assertTrue($d['valuation']['applies']);
+        $this->assertEqualsWithDelta(10000.0, $d['valuation']['cash'], 0.01);
+        $this->assertEqualsWithDelta(4000.0, $d['valuation']['loans'], 0.01);
+        $this->assertEqualsWithDelta($d['kpi']['npv'] + 10000 - 4000, $d['valuation']['equity_value'], 0.01);
+        // The enterprise value (the sum of the discounted free cash flow) and the free cash flow itself are not touched.
+        $this->assertEqualsWithDelta(array_sum($d['dcf']['discounted']), $d['kpi']['npv'], 0.5);
     }
 
     public function test_the_dashboard_can_be_read_by_a_colleague_with_view_access(): void

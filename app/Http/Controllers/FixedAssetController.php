@@ -101,7 +101,7 @@ class FixedAssetController extends Controller
                 'loanIntervals'     => FixedAssetService::LOAN_INTERVALS,
                 'paymentIntervals'  => FixedAssetService::PAYMENT_INTERVALS,
             ],
-            'readOnly' => ! $request->user()->can('update', $project),
+            'readOnly' => Gate::forUser($request->user())->denies('update', $project),
         ]);
     }
 
@@ -111,8 +111,8 @@ class FixedAssetController extends Controller
 
         return match ($request->input('after')) {
             'list'  => redirect()->route('projects.index')->with('success', __('costs.assetsSaved')),
-            // An existing company goes on to its opening balances; a new company starts from zero (the financial statements come next).
-            'next'  => ($project->new_company ? redirect()->route('projects.index') : redirect()->route('projects.opening.edit', $project))->with('success', __('costs.assetsSaved')),
+            // An existing company goes on to its opening balances; a new company starts from zero, so it goes straight to the financial statements.
+            'next'  => ($project->new_company ? redirect()->route('projects.statements', $project) : redirect()->route('projects.opening.edit', $project))->with('success', __('costs.assetsSaved')),
             default => redirect()->route('projects.assets.edit', $project)->with('success', __('costs.assetsSaved')),
         };
     }

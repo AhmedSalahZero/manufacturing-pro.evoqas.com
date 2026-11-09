@@ -23,8 +23,15 @@
   .snav{background:var(--card);border-bottom:1px solid var(--line);box-shadow:0 2px 6px rgba(16,40,100,.05)}
   .snav-in{display:flex;align-items:center;gap:14px;min-height:52px}
   .snav-name{flex:none;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;font-size:13.5px;color:var(--ink);padding-inline-end:14px;border-inline-end:2px solid var(--line)}
-  .snav-bar{flex:1;min-width:0;display:flex;align-items:center;gap:6px;overflow-x:auto;padding:8px 2px;scrollbar-width:none}
-  .snav-bar::-webkit-scrollbar{display:none}
+  .snav-scroll{flex:1;min-width:0;position:relative;display:flex;align-items:center}
+  .snav-bar{flex:1;min-width:0;display:flex;align-items:center;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;padding:8px 2px 6px;scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
+  .snav-bar::-webkit-scrollbar{height:6px}
+  .snav-bar::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:6px}
+  .snav-bar::-webkit-scrollbar-track{background:transparent}
+  .snav-arrow{flex:none;position:absolute;top:50%;transform:translateY(-58%);z-index:2;width:30px;height:30px;padding:0 0 3px;border-radius:50%;border:1px solid var(--line-2);background:var(--card);color:var(--ink);font-size:20px;line-height:1;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(16,40,100,.22)}
+  .snav-arrow:hover,.snav-arrow:focus-visible{background:color-mix(in srgb,var(--k1) 14%,var(--card))}
+  .snav-arrow-l{left:0} /* rtl-ok: the arrows are physical, they scroll the tabs left and right */
+  .snav-arrow-r{right:0} /* rtl-ok */
   .snav-i{--sc:var(--k1);flex:none;display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 13px;border-radius:999px;border:1px solid color-mix(in srgb,var(--sc) 30%,var(--line));background:color-mix(in srgb,var(--sc) 7%,var(--card));color:var(--ink);font:inherit;font-weight:600;font-size:13.5px;white-space:nowrap;text-decoration:none;cursor:pointer;transition:background-color .12s,box-shadow .12s}
   .snav-i:hover,.snav-i:focus-visible{background:color-mix(in srgb,var(--sc) 17%,var(--card))}
   .snav-i.on{background:var(--sc);border-color:var(--sc);color:#fff;box-shadow:0 2px 8px color-mix(in srgb,var(--sc) 35%,transparent)}

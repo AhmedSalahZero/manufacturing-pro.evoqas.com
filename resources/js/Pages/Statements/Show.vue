@@ -38,6 +38,7 @@ const { t } = useI18n();
         <StatementsTable v-else :statements="statements" :tax-rate="taxRate" />
 
         <div class="toolbar">
+            <Link v-if="ready" :href="route('projects.dashboard', project.id)" class="btn" data-save-dashboard>{{ t('statements.saveDashboard') }}</Link>
             <Link :href="route('projects.edit', project.id)" class="btn btn-line">← {{ t('statements.back') }}</Link>
         </div>
     </AppLayout>

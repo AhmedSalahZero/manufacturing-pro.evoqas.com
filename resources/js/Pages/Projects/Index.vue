@@ -5,10 +5,11 @@
   Server side: App\Http\Controllers\ProjectController (index, store, copy, destroy).
 -->
 <script setup>
-import { ref } from 'vue';
-import { Link, useForm } from '@inertiajs/vue3';
+import { computed, ref, watch } from 'vue';
+import { Link, router, useForm } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import ConfirmDialog from '@/Components/ConfirmDialog.vue';
+import ModalDialog from '@/Components/ModalDialog.vue';
 import { useI18n } from '@/lang/i18n';
 import { parseMonth } from '@/Utils/studyDates';
 
@@ -62,6 +63,39 @@ const doShare = () => shareForm.transform(() => ({
     preserveScroll: true,
     onSuccess: () => (sharing.value = null),
 });
+
+// Share template window: the "fill" link of a study. The customer opens it without signing in and fills in the input pages straight into
+// the study (no statements, no dashboard). Here: create it, copy it, pause / resume it, set the day it expires, delete it.
+const templateId = ref(null);
+const tplStudy = computed(() => props.studies.find((s) => s.id === templateId.value) ?? null);
+const tpl = computed(() => tplStudy.value?.fill_link ?? null);
+const newExpiry = ref('');
+const expiryInput = ref('');
+const copied = ref(false);
+const today = new Date().toISOString().slice(0, 10);
+const askTemplate = (study) => {
+    templateId.value = study.id;
+    newExpiry.value = '';
+    copied.value = false;
+};
+watch(tpl, (link) => { expiryInput.value = link?.expires_at ?? ''; }, { immediate: true });
+const keep = { preserveScroll: true };
+const createTemplate = () => router.post(route('projects.links.store', templateId.value), { type: 'fill', name: '', expires_at: newExpiry.value || null }, keep);
+const toggleTemplate = () => router.put(route('projects.links.toggle', [templateId.value, tpl.value.id]), {}, keep);
+const saveExpiry = () => router.put(route('projects.links.expiry', [templateId.value, tpl.value.id]), { expires_at: expiryInput.value || null }, keep);
+const clearExpiry = () => { expiryInput.value = ''; saveExpiry(); };
+const deleteTemplate = () => {
+    if (window.confirm(t('projects.template.deleteText'))) router.delete(route('projects.links.destroy', [templateId.value, tpl.value.id]), keep);
+};
+const copyTemplate = async () => {
+    try {
+        await navigator.clipboard.writeText(tpl.value.url);
+        copied.value = true;
+        setTimeout(() => { copied.value = false; }, 2000);
+    } catch {
+        window.prompt(t('sharing.copyManually'), tpl.value.url);
+    }
+};
 
 function monthLabel(value) {
     const parts = parseMonth(value);
@@ -128,11 +162,12 @@ const period = (study) => (study.start && study.end ? `${monthLabel(study.start)
                         <td class="num">{{ study.duration ?? '—' }}</td>
                         <td dir="ltr" class="num">{{ study.updated_at }}</td>
                         <td>
-                            <div class="gap1" style="display:flex;gap:6px">
+                            <div class="actgrid" data-actions>
                                 <Link :href="route('projects.edit', study.id)" class="btn sm">{{ t('projects.open') }}</Link>
                                 <a v-if="study.can_excel" :href="route('projects.excel', study.id)" class="btn btn-line sm" :title="t('projects.excelHint')" download>{{ t('projects.excel') }}</a>
                                 <button type="button" class="btn btn-line sm" @click="askCopy(study)">{{ t('projects.copy') }}</button>
                                 <button v-if="study.can_share" type="button" class="btn btn-line sm" @click="askShare(study)">{{ t('projects.share.button') }}</button>
+                                <button v-if="study.can_share" type="button" class="btn btn-line sm" data-action="template" @click="askTemplate(study)">{{ t('projects.template.button') }}</button>
                                 <button v-if="study.can_delete" type="button" class="btn btn-line sm" @click="deleting = study">{{ t('projects.delete') }}</button>
                             </div>
                         </td>
@@ -177,6 +212,43 @@ const period = (study) => (study.start && study.end ? `${monthLabel(study.start)
             </template>
         </ConfirmDialog>
 
+        <ModalDialog :open="!!tplStudy" :title="t('projects.template.title', { name: tplStudy?.name ?? '' })" :subtitle="t('projects.template.hint')" @close="templateId = null">
+            <div v-if="tplStudy" data-template="window">
+                <template v-if="!tpl">
+                    <p class="mute">{{ t('projects.template.none') }}</p>
+                    <div class="fld">
+                        <label for="tpl-new-exp">{{ t('projects.template.expires') }}</label>
+                        <input id="tpl-new-exp" v-model="newExpiry" class="inp" type="date" :min="today" dir="ltr" style="max-width:220px">
+                    </div>
+                    <p><button type="button" class="btn" data-action="tpl-create" @click="createTemplate">{{ t('projects.template.create') }}</button></p>
+                </template>
+                <template v-else>
+                    <div class="fld">
+                        <label for="tpl-url">{{ t('projects.template.link') }}</label>
+                        <input id="tpl-url" class="inp" type="text" readonly dir="ltr" :value="tpl.url" @focus="$event.target.select()">
+                    </div>
+                    <p data-tpl-status>
+                        <span class="badge" :class="tpl.status === 'active' ? 'b-green' : 'b-amber'">{{ t(`projects.template.status.${tpl.status}`) }}</span>
+                        <span class="mute small"> · {{ t('sharing.visits') }}: {{ tpl.visits }}</span>
+                    </p>
+                    <div class="actgrid" style="margin:10px 0">
+                        <button type="button" class="btn sm" data-action="tpl-copy" @click="copyTemplate">{{ copied ? t('sharing.copied') : t('projects.template.copy') }}</button>
+                        <button type="button" class="btn btn-line sm" data-action="tpl-toggle" @click="toggleTemplate">{{ tpl.closed ? t('projects.template.resume') : t('projects.template.pause') }}</button>
+                        <button type="button" class="btn btn-line sm" data-action="tpl-delete" @click="deleteTemplate">{{ t('projects.template.delete') }}</button>
+                    </div>
+                    <div class="fld">
+                        <label for="tpl-exp">{{ t('projects.template.expires') }}</label>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                            <input id="tpl-exp" v-model="expiryInput" class="inp" type="date" dir="ltr" style="max-width:220px">
+                            <button type="button" class="btn btn-line sm" data-action="tpl-expiry" @click="saveExpiry">{{ t('projects.template.saveDate') }}</button>
+                            <button v-if="tpl.expires_at" type="button" class="btn btn-line sm" data-action="tpl-noexpiry" @click="clearExpiry">{{ t('projects.template.noExpiry') }}</button>
+                        </div>
+                        <span class="mute small">{{ t('projects.template.expiresHelp') }}</span>
+                    </div>
+                </template>
+            </div>
+        </ModalDialog>
+
         <ConfirmDialog
             :open="!!deleting" :title="t('projects.deleteTitle')" :confirm-label="t('projects.deleteAction')"
             danger :busy="deleteForm.processing" @confirm="doDelete" @cancel="deleting = null"
@@ -185,3 +257,8 @@ const period = (study) => (study.start && study.end ? `${monthLabel(study.start)
         </ConfirmDialog>
     </AppLayout>
 </template>
+
+<style scoped>
+/* the action buttons of a study: two rows of three */
+.actgrid { display: grid; grid-template-columns: repeat(3, max-content); gap: 6px; justify-content: start; }
+</style>

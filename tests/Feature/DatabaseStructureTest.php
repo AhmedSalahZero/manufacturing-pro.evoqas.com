@@ -41,7 +41,7 @@ class DatabaseStructureTest extends TestCase
         'product_expense_allocations' => 'id,product_id,expense_type,expense_category,expense_name,is_expense,is_depreciation,is_opening_depreciation,payload,sensitivity_payload,project_id,created_at,updated_at,is_indirect_manpower',
         'seasonality' => 'id,model_id,model_name,type,percentages,distributed_percentages,created_at,updated_at,project_id',
         'sensitivity_loan_schedule_payments' => 'id,fixed_asset_id,month_as_index,loan_type,beginning,interestAmount,schedulePayment,InterestPayment,principleAmount,endBalance,created_at,updated_at,project_id,accured_interest',
-        'sharing_links' => 'id,user_id,project_id,name,link_code,closed,open,created_at,updated_at',
+        'sharing_links' => 'id,user_id,project_id,name,link_code,type,closed,expires_at,open,created_at,updated_at',
         'sharing_links_visitors' => 'id,ip,link_code,created_at,updated_at',
         'supplier_payable_opening_balances' => 'id,amount,payload,project_id,created_at,updated_at,statement',
         'vat_and_credit_withhold_tax_opening_balances' => 'id,vat_amount,credit_withhold_taxes,project_id,created_at,updated_at,corporate_taxes_payable',

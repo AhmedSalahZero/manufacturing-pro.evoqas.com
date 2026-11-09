@@ -100,8 +100,17 @@ class DashboardService
             $accumulated[$key] = $running;
         }
 
+        // An existing company brings cash and bank and loans from before the study: they are not part of the free cash flow,
+        // so they are added to / taken from the value of the discounted cash flow to reach the equity value (see present()).
+        $opening = ['applies' => ! $project->new_company, 'cash' => 0.0, 'loans' => 0.0];
+        if ($opening['applies']) {
+            $opening['cash'] = (float) $project->cashAndBankOpeningBalances()->sum('cash_and_bank_amount');
+            $opening['loans'] = (float) $project->longTermLoanOpeningBalances()->sum('amount');
+        }
+
         return [
             'monthly'    => $monthly,
+            'opening'    => $opening,
             'periods'    => $periods,
             'cash'       => ['in' => $cashIn, 'out' => $cashOut, 'accumulated' => $accumulated],
             'built'      => $built,
@@ -173,6 +182,14 @@ class DashboardService
                 'discounted'      => $list($dcf['discounted']),
                 'terminal_pv'     => round($dcf['terminal_pv'], 2),
                 'terminal_ok'     => $dcf['terminal_ok'],
+            ],
+            // Equity value (existing company only) = NPV (the sum of the discounted free cash flow, i.e. the enterprise value)
+            // + cash and bank at the opening − loans outstanding at the opening. The free cash flow itself is not changed.
+            'valuation'  => [
+                'applies'      => $dashboard['opening']['applies'],
+                'cash'         => round($dashboard['opening']['cash'], 2),
+                'loans'        => round($dashboard['opening']['loans'], 2),
+                'equity_value' => round($dcf['npv'] + $dashboard['opening']['cash'] - $dashboard['opening']['loans'], 2),
             ],
             'ratios'     => array_map($list, $dashboard['ratios']),
             'kpi'        => [

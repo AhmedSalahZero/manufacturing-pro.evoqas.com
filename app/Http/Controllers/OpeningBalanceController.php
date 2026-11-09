@@ -122,7 +122,7 @@ class OpeningBalanceController extends Controller
                 ],
             ],
             'inventory' => $this->balances->inventory($project),
-            'readOnly'  => ! $request->user()->can('update', $project),
+            'readOnly'  => Gate::forUser($request->user())->denies('update', $project),
         ]);
     }
 

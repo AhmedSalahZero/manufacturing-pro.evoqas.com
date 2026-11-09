@@ -13,4 +13,6 @@ return [
     'link_closed'       => 'The link is now switched off. Nobody can open it.',
     'link_opened'       => 'The link is switched on again.',
     'link_deleted'      => 'The link was deleted.',
+    'link_expiry_saved' => 'The expiry date of the link was saved.',
+    'template_name'     => 'Template link',
 ];

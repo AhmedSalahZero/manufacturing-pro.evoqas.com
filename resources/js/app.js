@@ -14,6 +14,7 @@ import { ZiggyVue } from 'ziggy-js';
 import { initPreferences } from '@/composables/usePreferences';
 import { setLocale } from '@/lang/i18n';
 import { registerServiceWorker } from '@/pwa/register';
+import { applyPublicRoutes } from '@/Utils/publicRoutes';
 
 const appName = import.meta.env.VITE_APP_NAME || 'ZAVERO Manufacturing Pro';
 
@@ -22,6 +23,10 @@ createInertiaApp({
     resolve: (name) => resolvePageComponent(`./Pages/${name}.vue`, import.meta.glob('./Pages/**/*.vue')),
     setup({ el, App, props, plugin }) {
         initPreferences(props.initialPage.props);
+        // A visitor of a public sharing link: the page names lead to the /shared/{code}/... addresses.
+        if (props.initialPage.props.public) {
+            applyPublicRoutes(typeof Ziggy !== 'undefined' ? Ziggy : globalThis.Ziggy, props.initialPage.props.public.code, props.initialPage.props.public.kind);
+        }
         router.on('success', (event) => setLocale(event.detail.page.props.locale));
 
         return createApp({ render: () => h(App, props) })

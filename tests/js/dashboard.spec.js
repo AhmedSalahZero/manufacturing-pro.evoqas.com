@@ -2,7 +2,7 @@
 //  ZAVERO Manufacturing Pro — Dashboard, what-if, public link and report screen tests (run: npm test)
 //  Location: tests/js/dashboard.spec.js
 //  Checks: every word the dashboard can show exists in English and Arabic; the dashboard shows the KPI tiles and switches
-//  between its tabs; "No IRR" and "never" are said in words; the public page offers dashboard and statements only.
+//  between its tabs; "No IRR" and "never" are said in words; the public link now opens the whole study (see publicLink.spec.js).
 // ══════════════════════════════════════════════════════════════════
 import { describe, expect, it, vi } from 'vitest';
 import { createApp, h, nextTick } from 'vue';
@@ -22,7 +22,6 @@ vi.mock('@/pwa/register', () => ({ applyUpdate() {}, updateReady: { value: false
 globalThis.route = (name, p) => `/${name}${p ? `/${p}` : ''}`;
 
 const { default: DashboardView } = await import('@/Components/DashboardView.vue');
-const { default: Shared } = await import('@/Pages/Shared/Show.vue');
 const { default: en } = await import('@/lang/en.js');
 const { default: ar } = await import('@/lang/ar.js');
 
@@ -68,6 +67,8 @@ describe('words', () => {
         ...['ebit', 'taxes', 'depreciation', 'working_capital', 'capex', 'free_cash_flow', 'wacc', 'terminal_value', 'with_terminal', 'discount_factor', 'discounted'].map((k) => `dashboard.dcf.rows.${k}`),
         ...['enterprise', 'irr', 'payback', 'terminalShare'].map((k) => `dashboard.dcf.summary.${k}`),
         'dashboard.dcf.summaryTitle', 'dashboard.dcf.summaryNote',
+        'dashboard.investment.structure', 'dashboard.dcf.equityTitle', 'dashboard.dcf.equityNote',
+        ...['npv', 'cash', 'loans', 'equity_value'].map((k) => `dashboard.dcf.equity.${k}`),
         ...['liquidity', 'activity', 'current_ratio', 'quick_ratio', 'cash_ratio', 'working_capital', 'dso', 'dio', 'dpo', 'ccc'].map((k) => `dashboard.ratios.${k}`),
         ...['revenue', 'growth', 'accumulated', 'margin', 'gross_profit', 'ebitda', 'ebit', 'net_profit', 'costsPercent'].map((k) => `dashboard.charts.${k}`),
         ...['start', 'duration', 'currency', 'tax', 'returnRate', 'growth'].map((k) => `report.summary.${k}`),
@@ -100,6 +101,55 @@ describe('dashboard', () => {
         expect(el.querySelector('[data-kpi="investment"]').textContent).toContain('6,000');
         expect(el.querySelector('[data-section="overview"]')).not.toBeNull();
         expect(el.querySelector('[data-section="value"]')).toBeNull();
+    });
+
+    it('keeps the overview as it was: two revenue charts side by side and the required investment tiles, no Investment Structure card', async () => {
+        const el = await mount(DashboardView, { dashboard: withDcf(), currency: 'EGP' });
+        const overview = el.querySelector('[data-section="overview"]');
+
+        expect(overview.querySelector('[data-investment="structure"]')).toBeNull();
+        expect(overview.querySelector('[data-block="revenue"] .grid2 [data-chart="revenue"]')).not.toBeNull();
+        expect(overview.querySelector('[data-block="revenue"] .grid2 [data-chart="accumulated"]')).not.toBeNull();
+        expect(overview.textContent).toContain('Required investment');
+        expect(overview.querySelectorAll('.tiles .tile').length).toBe(4);
+        expect(overview.textContent).toContain('5,000');
+    });
+
+    it('puts the Investment Structure card at the left of the free cash flow bar chart in the valuation tab', async () => {
+        const el = await mount(DashboardView, { dashboard: withDcf(), currency: 'EGP' });
+        el.querySelector('[data-tab="value"]').click();
+        await nextTick();
+
+        const row = el.querySelector('[data-valuation="chartrow"]');
+        const card = row.querySelector('[data-investment="structure"]');
+        expect(card).not.toBeNull();
+        expect(card.querySelector('h4').textContent).toBe('Investment Structure');
+        expect([...card.querySelectorAll('[data-invest]')].map((r) => r.dataset.invest)).toEqual(['fixed_assets', 'working_capital', 'equity', 'loans']);
+        expect(card.querySelector('[data-invest="fixed_assets"]').textContent).toContain('5,000');
+        expect(card.querySelector('[data-invest="fixed_assets"]').textContent).toContain('EGP');
+        expect(card.querySelector('[data-invest="loans"]').textContent).toContain('2,000');
+        // the card comes first (left), the bar chart second (8 parts)
+        expect(row.children[0]).toBe(card);
+        expect(row.children[1].classList.contains('valchart')).toBe(true);
+        expect(row.children[1].querySelector('svg')).not.toBeNull();
+    });
+
+    it('shows the equity value (NPV + opening cash - opening loans) only for an existing company', async () => {
+        const existing = withDcf();
+        existing.valuation = { applies: true, cash: 10000, loans: 4000, equity_value: 7500 };
+        let el = await mount(DashboardView, { dashboard: existing, all: true });
+        const lines = [...el.querySelectorAll('[data-equity]')].map((x) => x.dataset.equity);
+
+        expect(lines).toEqual(['npv', 'cash', 'loans', 'equity_value']);
+        expect(el.querySelector('[data-equity="cash"]').textContent).toContain('10,000');
+        expect(el.querySelector('[data-equity="loans"]').textContent).toContain('4,000');
+        expect(el.querySelector('[data-equity="equity_value"]').textContent).toContain('7,500');
+
+        const fresh = withDcf();
+        fresh.valuation = { applies: false, cash: 0, loans: 0, equity_value: 1500 };
+        el = await mount(DashboardView, { dashboard: fresh, all: true });
+        expect(el.querySelector('[data-valuation="equity"]')).toBeNull();
+        expect(el.querySelector('[data-valuation="summary"]')).not.toBeNull();
     });
 
     it('has the tabs in the order overview, profitability, costs, ratios, valuation', async () => {
@@ -207,19 +257,5 @@ describe('dashboard', () => {
 
         for (const s of ['overview', 'profit', 'costs', 'value', 'ratios']) expect(el.querySelector(`[data-section="${s}"]`), s).not.toBeNull();
         expect(el.querySelector('[data-tab]')).toBeNull();
-    });
-});
-
-describe('public page', () => {
-    it('offers the dashboard and the statements and nothing else', async () => {
-        const statements = { years: [], tabs: { income: [], cash: [], balance: [] }, check: { balanced: true, gap: 0 }, tiles: { revenue: 1, net_profit: 1, net_margin: 1, cash_end: 1 } };
-        const el = await mount(Shared, { project: { name: 'Plant A', currency: 'EGP', intro: '' }, link: { name: 'Bank' }, ready: true, comments: { one: 'Steady.' }, dashboard: withDcf(), statements });
-
-        expect(el.querySelectorAll('[data-view]').length).toBe(2);
-        expect(el.textContent).toContain('Steady.');
-        expect(el.querySelector('input, textarea')).toBeNull();
-        el.querySelector('[data-view="statements"]').click();
-        await nextTick();
-        expect(el.querySelector('[data-kpi]')).toBeNull();
     });
 });

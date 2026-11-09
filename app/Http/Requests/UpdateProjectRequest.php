@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Support\StudyCalendar;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 
 // ══════════════════════════════════════════════════════════════════
@@ -26,7 +27,7 @@ class UpdateProjectRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()->can('update', $this->route('project'));
+        return Gate::forUser($this->user())->allows('update', $this->route('project'));
     }
 
     protected function prepareForValidation(): void
@@ -57,6 +58,14 @@ class UpdateProjectRequest extends FormRequest
             if ($start) {
                 $merge['end_date'] = StudyCalendar::endYear($start, (int) $duration).'-12-01';
             }
+        }
+
+        // The three rates are the owner's assumptions: a customer who fills in the study through a "fill" link keeps what is saved.
+        $link = $this->attributes->get('public_link');
+        if ($link && $link->isFill() && ($project = $this->route('project'))) {
+            $merge['tax_rate'] = $project->tax_rate;
+            $merge['return_rate'] = $project->return_rate;
+            $merge['perpetual_growth_rate'] = $project->perpetual_growth_rate;
         }
 
         $this->merge($merge);

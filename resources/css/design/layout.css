@@ -9,6 +9,7 @@
   .page{padding-top:var(--s5);padding-bottom:64px}
   .pagehead{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:var(--s3) var(--s5);margin-bottom:var(--s4)}
   .pagehead>div:first-child{flex:1 1 420px;min-width:0}
+  .pagehead h2,.pagehead .lead{overflow-wrap:anywhere}
   .pagehead+.toolbar{padding-top:0}
   .pagehead .actions{display:flex;gap:var(--s2);flex-wrap:wrap}
   .lead{color:var(--mute);margin-bottom:var(--s3);max-width:76ch;font-size:14.5px}

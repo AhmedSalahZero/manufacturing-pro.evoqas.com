@@ -82,7 +82,7 @@ class ManpowerController extends Controller
             'allocations' => (object) $allocations,
             'byRevenue'   => (object) $byRevenue,
             'results'     => $this->results($rows, $timeline),
-            'readOnly'    => ! $request->user()->can('update', $project),
+            'readOnly'    => Gate::forUser($request->user())->denies('update', $project),
         ]);
     }
 

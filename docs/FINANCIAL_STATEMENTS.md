@@ -14,8 +14,8 @@ Everything spent on making a product in a month (raw materials, direct labour, m
 
 ## The three statements
 - **Income statement:** revenue − cost of goods sold = gross profit; − operating expenses (general, sales, marketing, and start-up / pre-operating for a new company; staff of those types; administration depreciation) = EBIT; EBITDA = EBIT + depreciation; − finance cost (loan interest after the asset is in use); = profit before tax; − corporate tax = net profit. Retained earnings carry the profit of the months before.
-- **Cash flow:** collections from customers + owners' equity + bank loans drawn; minus payments to suppliers, salaries and expenses, taxes, fixed assets, loan instalments. If a month would end below zero the owners put in the missing amount ("top-up"), so cash is never negative.
-- **Balance sheet:** assets (cash, customers, stock, other debtors, VAT receivable, assets under construction, net fixed assets) = liabilities (suppliers, asset suppliers, VAT payable, withholding tax, salary tax and insurance, corporate tax, other creditors, loans, other long-term) + equity (paid-up capital, additional paid-in capital = equity put in + top-ups, legal reserve, retained earnings, profit of the period). The "Check" line must be 0 in every month; the page warns if it is not.
+- **Cash flow:** collections from customers + owners' equity + bank loans drawn; minus payments to suppliers, salaries and expenses, taxes, fixed assets, loan instalments. If a month would end below zero the owners put in the missing amount ("Extra Equity Injection"), so cash is never negative.
+- **Balance sheet:** assets (cash, customers, stock, other debtors, VAT receivable, assets under construction, net fixed assets) = liabilities (suppliers, asset suppliers, VAT payable, withholding tax, salary tax and insurance, corporate tax, other creditors, loans, other long-term) + equity (paid-up capital, additional paid-in capital = equity put in + extra equity injections, legal reserve, retained earnings, profit of the period). The "Check" line must be 0 in every month; the page warns if it is not.
 
 ## Egyptian tax rules
 | Tax | Rule |

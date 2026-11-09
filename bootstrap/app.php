@@ -8,6 +8,7 @@ use App\Http\Middleware\EnsureSuperAdmin;
 use App\Http\Middleware\HandleInertiaRequests;
 use App\Http\Middleware\NoStoreForAuthenticated;
 use App\Http\Middleware\PreventDuplicateSubmission;
+use App\Http\Middleware\PublicLink;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SetLocale;
 use Illuminate\Foundation\Application;
@@ -35,6 +36,7 @@ use Illuminate\Http\Request;
 //    super         → the super admin only
 //    company       → people of a company (the super admin is sent to the companies)
 //    company-admin → the administrator of a company
+//    public-link   → the door of /shared/{code}/... (a public sharing link: looking only)
 // ══════════════════════════════════════════════════════════════════
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -66,6 +68,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'super'        => EnsureSuperAdmin::class,
             'company'      => EnsureCompanyMember::class,
             'company-admin' => EnsureCompanyAdmin::class,
+            'public-link'  => PublicLink::class,
         ]);
 
         // Signing out must always work, even when the page was open so long that its

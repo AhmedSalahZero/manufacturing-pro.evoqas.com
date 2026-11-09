@@ -123,7 +123,11 @@ class DemoSeederTest extends TestCase
         $link = SharingLink::with('project')->where('project_id', $this->study(DemoSeeder::STUDY_NEW)->id)->firstOrFail();
         $this->app['auth']->forgetGuards();
 
-        $this->get(route('shared.show', $link->link_code))->assertOk();
+        // The address of the link opens the first page of the study; the dashboard of the study opens through the same link too.
+        $first = route('shared.projects.edit', ['code' => $link->link_code, 'project' => $link->project]);
+        $this->get(route('shared.show', $link->link_code))->assertRedirect($first);
+        $this->get($first)->assertOk();
+        $this->get(route('shared.projects.dashboard', ['code' => $link->link_code, 'project' => $link->project]))->assertOk();
     }
 
     public function test_the_report_shows_every_building_block_of_the_study(): void

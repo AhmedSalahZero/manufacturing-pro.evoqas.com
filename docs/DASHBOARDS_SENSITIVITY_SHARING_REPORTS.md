@@ -7,7 +7,7 @@
 | What if …? | /projects/{id}/sensitivity | view: anyone; save: editors |
 | Printable report | /projects/{id}/report | anyone with access |
 | Public links | /projects/{id}/links | owner or company administrator |
-| Shared page | /shared/{code} | nobody signs in; read-only |
+| Shared study | /shared/{code} (opens the study form; then /shared/{code}/projects/{id}/...) | nobody signs in; looking only |
 
 ## Dashboard (ported from `Project::getDashboardViewVars`)
 Free cash flow = EBIT + depreciation + change in working capital − tax on EBIT (only if EBIT > 0) − capex.
@@ -26,8 +26,26 @@ The scenario re-runs the whole calculation chain inside a database transaction t
 Shown side by side: total revenue, net profit, NPV, IRR, payback and three charts.
 
 ## Public links
-Random 40-character code, name, on/off switch, delete. Visitors see dashboard + statements + the two notes only. Visits are logged once per address per hour.
-A switched-off link shows a "closed" page (410); unknown code 404. Links of a deleted study stop working.
+Random 40-character code, name, on/off switch, delete. A visitor (no sign-in) walks through **every page of the study, start to end, looking only**:
+study form (with the tax, return and growth rates), every product, raw materials, manpower plan, expenses, fixed assets, opening balances (existing company),
+financial statements, dashboard (with the notes) and what-if. The pages are the same pages and controllers as inside the app, opened through
+`/shared/{code}/projects/{id}/...` (GET only, so nothing can be saved). Not reachable from a link: the report, the links page, other studies, the company's people.
+The study bar of a visitor has no report and no links; the owner's name is not sent. Visits are logged once per address per hour.
+A switched-off link shows a "closed" page (410) on every page; unknown code 404; a code used with another study's id 404. Links of a deleted study stop working.
+How it works: the middleware `public-link` (App\Http\Middleware\PublicLink) checks the code and lets the policy `ProjectPolicy::view` accept a guest for that one study;
+the screens swap their addresses with resources/js/Utils/publicRoutes.js.
+
+### Fill links (the "Share template" button of the list of studies)
+A link has a **type**: `view` (the whole study, looking only, see above) or `fill` (`/fill/{code}`): the customer opens it without signing in and **fills in the
+input pages** (study form, products, raw materials, manpower, expenses, fixed assets and, for an existing company, opening balances), saved **straight into the
+study**. He never sees statements, dashboard, what-if, report or links (those addresses do not exist under /fill). The three rates (tax, return, growth) are shown
+but locked: the server keeps the saved values whatever he sends. After a save the customer is kept inside his pages (next input page; the thank-you page
+`/fill/{code}/thanks` when the next place is not one of his pages: after the fixed assets of a new company, after the opening balances, "save and close").
+To keep a clean version, make a copy of the study (the Copy button) before sending the link and work in the copy.
+Both kinds of link can be **paused / resumed** (switch) and have an optional **expiry date** (the last day the link works): a paused or expired link shows a
+"closed" / "expired" page (410), logs nothing and refuses every save. A fill link also stops when the company's subscription has ended.
+Where: the Actions column of the list of studies (Share template window: create, copy, pause, expiry date, delete) and the study's Links page (all links).
+Table `sharing_links` has two more columns: `type` (view | fill) and `expires_at` (date, empty = never).
 
 ## Report
 One page: summary, every dashboard section, notes, yearly statements. Button "Print / Save as PDF" (browser print; approved print layout, A4 landscape).

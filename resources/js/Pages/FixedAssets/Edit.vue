@@ -10,7 +10,7 @@
 -->
 <script setup>
 import { computed, nextTick, ref } from 'vue';
-import { Link, useForm } from '@inertiajs/vue3';
+import { Link, useForm, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import ConfirmDialog from '@/Components/ConfirmDialog.vue';
 import ModalDialog from '@/Components/ModalDialog.vue';
@@ -29,6 +29,8 @@ const props = defineProps({
 });
 
 const { t } = useI18n();
+// A customer of a "fill" link has no financial statements to go to: his last page for a new company ends with "Save and finish".
+const isFill = computed(() => usePage().props.public?.kind === 'fill');
 const TERMS = ['cash', 'customize', 'installment'];
 const DEPRECIATION_YEARS = [0, ...Array.from({ length: 23 }, (_, i) => i + 3)];
 
@@ -304,7 +306,7 @@ function save(after) {
             <div class="toolbar">
                 <button v-if="!readOnly" type="submit" class="btn" :disabled="form.processing">{{ form.processing ? t('products.actions.saving') : t('products.actions.save') }}</button>
                 <button v-if="!readOnly" type="button" class="btn btn-line" :disabled="form.processing" @click="save('list')">{{ t('products.actions.saveClose') }}</button>
-                <button v-if="!readOnly && !project.newCompany" type="button" class="btn btn-line" :disabled="form.processing" @click="save('next')">{{ t('assets.saveNext') }}</button>
+                <button v-if="!readOnly" type="button" class="btn btn-line" :disabled="form.processing" data-save-next @click="save('next')">{{ project.newCompany ? (isFill ? t('fill.saveFinish') : t('assets.saveNextStatements')) : t('assets.saveNext') }}</button>
                 <Link :href="route('projects.expenses.edit', project.id)" class="btn btn-line">← {{ t('assets.back') }}</Link>
                 <Link :href="route('projects.edit', project.id)" class="btn btn-line">{{ t('common.cancel') }}</Link>
             </div>
