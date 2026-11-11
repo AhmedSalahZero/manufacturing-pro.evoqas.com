@@ -147,6 +147,7 @@ final class ManpowerSheet
         foreach ($m->products as $i => $_) {
             $planned[] = 'aoh'.$i;
         }
+        array_push($planned, 'udl', 'uoh');
         $g->plan($planned);
         $sum = function (K $k, array $sel) use ($staff, $x, $types) {
             $parts = [];
@@ -178,11 +179,19 @@ final class ManpowerSheet
             foreach ($m->products as $i => $pr) {
                 $g->line($pfx.$i, $x->t('mp.allocRow', $types[$type], (string) ($pr['name'] ?? '')), function (K $k) use ($x, $i, $type, $cost, $col, $rangeOf, $first) {
                     $r = $first + $i;
-                    $typed = ShareSheet::typed($k, '$'.$col.'$'.$r, '$G$'.$r, $rangeOf($col), $rangeOf('G'));
+                    $typed = ShareSheet::typed($k, '$'.$col.'$'.$r, $rangeOf($col), $i);
 
                     return "IF(".$x->name('mp.rev.'.$type).'="'.$x->t('c.yes').'",'.$x->x('share.rs'.$i, $k->c).",$typed)*{$k->r($cost)}";
                 }, ['total' => 'sum']);
             }
+        }
+        // what no product took (no product is making or selling that month): it is a general expense of the month
+        foreach (['direct_labor' => ['udl', 'adl', 'cdl'], 'manufacturing_overheads' => ['uoh', 'aoh', 'coh']] as $type => [$u, $pfx, $cost]) {
+            $g->line($u, $x->t('mp.unalloc', $types[$type]), function (K $k) use ($m, $pfx, $cost) {
+                $rows = array_map(fn ($i) => $k->r($pfx.$i), array_keys($m->products));
+
+                return ShareSheet::left($k->r($cost), $rows === [] ? '0' : implode('+', $rows));
+            }, ['total' => 'sum', 'bold' => true]);
         }
         $sh->freeze(4, Ctx::FIRST);
     }

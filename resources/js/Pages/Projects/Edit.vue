@@ -12,6 +12,7 @@ import { Link, useForm, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import ConfirmDialog from '@/Components/ConfirmDialog.vue';
 import MonthYearInput from '@/Components/MonthYearInput.vue';
+import SalesChannelsCard from '@/Components/SalesChannelsCard.vue';
 import { useI18n } from '@/lang/i18n';
 import { addMonths, monthsBetween, parseMonth, studyEnd } from '@/Utils/studyDates';
 
@@ -22,6 +23,8 @@ const props = defineProps({
     readOnly: { type: Boolean, default: false },
     sectors: { type: Array, required: true },
     options: { type: Object, required: true },
+    // Sales channels and export: the switch, the channels, the markets, the FX forecast and the products that still export.
+    sales: { type: Object, default: () => ({ has_export_sales: false, channels: [], markets: [], fx: [], exportProducts: [] }) },
 });
 
 const { t, isAr } = useI18n();
@@ -72,7 +75,17 @@ const blankMaterial = () => ({
     id: null, name: '', rm_inventory_coverage_days: 0, measurement_unit: 'ton', vat_rate: 0, withhold_tax_rate: 0,
 });
 
+// The FX rates arrive as { year index: rate }; the card works with the same shape, one slot per study year.
+const salesFromServer = () => ({
+    has_export_sales: Boolean(props.sales.has_export_sales),
+    clear_export: false,
+    sales_channels: props.sales.channels.map((c) => ({ ...c })),
+    export_markets: props.sales.markets.map((m) => ({ ...m })),
+    fx_rates: props.sales.fx.map((row) => ({ currency: row.currency, rates: { ...row.rates } })),
+});
+
 const form = useForm({
+    ...salesFromServer(),
     name: props.project.name ?? '',
     new_company: Boolean(props.project.new_company),
     main_functional_currency: props.project.main_functional_currency,
@@ -144,6 +157,8 @@ function save(after) {
     form.after = after;
     form.put(route('projects.update', props.project.id), {
         preserveScroll: true,
+        // New channels and markets now have ids: take them from the saved study so saving again does not create them twice.
+        onSuccess: () => Object.assign(form, salesFromServer()),
         onError: async () => {
             await nextTick();
             document.querySelector('[aria-invalid="true"]')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -267,6 +282,9 @@ const invalid = (path) => Boolean(form.errors[path]);
                     </div>
                 </div>
             </section>
+
+            <!-- Sales channels and export -->
+            <SalesChannelsCard :form="form" :options="options" :export-products="sales.exportProducts" />
 
             <!-- Products -->
             <section class="card">

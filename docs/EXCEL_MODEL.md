@@ -2,7 +2,7 @@
 
 **What it is.** On the Studies page, the **Excel Model** button downloads the study as a live `.xlsx`: one sheet per page of the
 application (Study, Products, Raw materials, Share, Manpower Plan, Expenses, Fixed assets, Opening balances, Costing, Income
-statement, Taxes, Cash flow, Balance sheet, Dashboard, Calendar) plus a Cover. Every result is a formula, so changing a yellow
+statement, Taxes, Cash flow, Balance sheet, Dashboard, Calendar, and Exchange rates when the study has foreign currencies) plus a Cover. Product sheets list every sales channel and export market (see `SALES_CHANNELS_AND_EXPORT.md`, Stage D). Every result is a formula, so changing a yellow
 input cell recalculates everything.
 
 **Rules of the workbook**
@@ -14,6 +14,8 @@ input cell recalculates everything.
 **Where the code is** — `app/Excel/*` (own .xlsx writer, one class per sheet in `Sheets/`), `ModelDataBuilder` (study → plain data),
 `ExcelModelController`, route `projects.excel`. `php artisan zavero:model-dump "<study name>"` writes the same data plus the saved
 statements to `storage/app/model-dump-<id>.json` for checking.
+
+**Fixed assets in the workbook.** Each asset has a *Kind of asset* (Land, Construction, Machine, Other) and, for a construction, a *Spending* choice (equal each month or S-curve). A machine also has a *Delivery date* (its *End date* is the date it is ready) and three milestone lines (% and days after the purchase, the delivery and the ready date). Land and other assets use only the purchase date; land is never depreciated. The numbers follow `FixedAssetCalculator` exactly.
 
 **Known limits**
 - Months beyond the monthly grid (December of max(end year + 1, start year + 6)) are not reproduced.

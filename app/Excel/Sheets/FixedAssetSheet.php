@@ -12,7 +12,10 @@ use App\Excel\Sheet;
 // depreciation and what is still owed to the supplier. Same rules as FixedAssetCalculator and LoanCalculator.
 final class FixedAssetSheet
 {
-    public const TERMS = ['cash', 'customize', 'installment'];
+    public const TERMS = ['cash', 'customize', 'installment', 'milestone'];
+    public const KINDS = ['land', 'construction', 'machine', 'other'];
+    public const CURVES = ['flat', 's_curve'];
+    public const MILESTONES = ['purchase', 'delivery', 'ready'];
     public const INTERVALS = ['monthly', 'quarterly', 'semi-annually', 'annually'];
     /** Rows of the loan repayment table (one per instalment period, so up to 20 years of monthly instalments). */
     public const PERIODS = 241;
@@ -33,6 +36,14 @@ final class FixedAssetSheet
         $ints = [];
         foreach (self::INTERVALS as $t) {
             $ints[$t] = $x->t('fa.int.'.$t);
+        }
+        $kinds = [];
+        foreach (self::KINDS as $t) {
+            $kinds[$t] = $x->t('fa.kinds.'.$t);
+        }
+        $curves = [];
+        foreach (self::CURVES as $t) {
+            $curves[$t] = $x->t('fa.curves.'.$t);
         }
         $yes = $x->t('c.yes');
         $no = $x->t('c.no');
@@ -60,15 +71,26 @@ final class FixedAssetSheet
             $sc('counts', $x->t('fa.counts'), (float) ($a['counts'] ?? 1), 'in_num');
             $sc('amount', $x->t('fa.amount'), (float) ($a['amount'] ?? 0), 'in_num', $x->t('fa.amountNote'));
             $sc('total', $x->t('fa.total'), $L('counts').'*'.$L('amount'), 'num', null, true);
+
+            // the kind of asset: land and other assets are bought in one month, land is never depreciated, a machine is delivered and then ready
+            $list('kind', $x->t('fa.kind'), $kinds[(string) (($a['asset_type'] ?? '') ?: 'construction')] ?? $kinds['construction'], $kinds);
+            $list('curve', $x->t('fa.curve'), $curves[(string) (($a['execution_curve'] ?? '') ?: 'flat')] ?? $curves['flat'], $curves);
+            $sc('mach', $x->t('fa.mach'), 'IF('.$L('kind').'="'.$kinds['machine'].'",1,0)', 'lock_int', null, true);
+            $sc('land', $x->t('fa.land'), 'IF('.$L('kind').'="'.$kinds['land'].'",1,0)', 'lock_int', null, true);
+            $sc('one', $x->t('fa.one'), 'IF(OR('.$L('kind').'="'.$kinds['land'].'",'.$L('kind').'="'.$kinds['other'].'"),1,0)', 'lock_int', $x->t('fa.oneNote'), true);
+            $sc('scv', $x->t('fa.scv'), 'IF(AND('.$L('kind').'="'.$kinds['construction'].'",'.$L('curve').'="'.$curves['s_curve'].'"),1,0)', 'lock_int', null, true);
             $sc('start', $x->t('fa.start'), (float) $m->serial(min((int) $a['start_date'], $D - 1)), 'in_date', $x->t('fa.startNote'));
             $sc('sIdx', $x->t('fa.sIdx'), $dateIdx($L('start')), 'lock_int', null, true);
-            $sc('end', $x->t('fa.end'), (float) $m->serial(min((int) $a['end_date'], $D - 1)), 'in_date');
-            $sc('eIdx', $x->t('fa.eIdx'), $dateIdx($L('end')), 'lock_int', null, true);
+            $sc('delivery', $x->t('fa.delivery'), (float) $m->serial(min((int) (($a['delivery_date'] ?? null) ?? $a['start_date']), $D - 1)), 'in_date', $x->t('fa.deliveryNote'));
+            $sc('end', $x->t('fa.end'), (float) $m->serial(min((int) $a['end_date'], $D - 1)), 'in_date', $x->t('fa.endNote'));
+            $sc('eIdx', $x->t('fa.eIdx'), 'IF('.$L('one').'=1,'.$L('sIdx').','.$dateIdx($L('end')).')', 'lock_int', $x->t('fa.eIdxNote'), true);
+            $sc('dIdx', $x->t('fa.dIdx'), 'IF('.$L('mach').'=1,MIN(MAX('.$dateIdx($L('delivery')).','.$L('sIdx').'),'.$L('eIdx').'),'.$L('sIdx').')', 'lock_int', $x->t('fa.dIdxNote'), true);
             $sc('dur', $x->t('fa.dur'), 'IF('.$L('eIdx').'='.$L('sIdx').',0,'.$L('eIdx').'-'.$L('sIdx').'+1)', 'lock_int', $x->t('fa.durNote'), true);
             $sc('depYears', $x->t('fa.depYears'), (float) ($a['depreciation_duration'] ?? 0), 'in_int', $x->t('fa.years'));
             $sc('admin', $x->t('fa.admin'), (float) ($a['admin_depreciation_percentage'] ?? 0), 'in_pct', $x->t('fa.adminNote'));
             $sc('mfg', $x->t('fa.mfg'), '100-'.$L('admin'), 'pct', null, true);
-            $sc('replRate', $x->t('fa.replRate'), (float) ($a['replacement_cost_rate'] ?? 0), 'in_pct', $x->t('fa.replRateNote'));
+            $sc('replRate0', $x->t('fa.replRate'), (float) ($a['replacement_cost_rate'] ?? 0), 'in_pct', $x->t('fa.replRateNote'));
+            $sc('replRate', $x->t('fa.replRateE'), 'IF('.$L('land').'=1,0,'.$L('replRate0').')', 'pct', $x->t('fa.replRateENote'), true);
             $sc('replYears', $x->t('fa.replYears'), (float) ($a['replacement_cost_interval'] ?? 0), 'in_int', $x->t('fa.years'));
 
             // payment terms
@@ -93,6 +115,22 @@ final class FixedAssetSheet
                 $sh->list('G'.$r, [$yes, $no]);
                 $sh->formula($r, 8, "IF(E$r=\"\",0,IF(E$r<30,0,ROUND(E$r/30,0)))", $x->s('flag'));
                 $lineRows[] = $r;
+                $g->row++;
+            }
+            // milestone payments of a machine: a % at the purchase, at the delivery and when it is ready, each some days later
+            $ms = (array) ($a['milestone_payments'] ?? []);
+            $r = $g->row;
+            $sh->set($r, 1, $x->t('fa.milestones'), $x->s('label_b'))->set($r, 5, $x->t('exp.days'), $x->s('hdr'))->set($r, 6, $x->t('exp.rate'), $x->s('hdr'))->set($r, 8, $x->t('pol.lag1'), $x->s('hdr'));
+            $sh->height($r, 32);
+            $g->row++;
+            $msRows = [];
+            foreach (self::MILESTONES as $key) {
+                $r = $g->row;
+                $has = isset($ms[$key]) && (float) ($ms[$key]['rate'] ?? 0) != 0.0;
+                $sh->set($r, 1, $x->t('fa.ms.'.$key), $x->s('label_i'));
+                $sh->set($r, 5, $has ? (float) ($ms[$key]['days'] ?? 0) : null, $x->s('in_int'))->set($r, 6, $has ? (float) $ms[$key]['rate'] : null, $x->s('in_pct'));
+                $sh->formula($r, 8, "IF(E$r=\"\",0,IF(E$r<30,0,ROUND(E$r/30,0)))", $x->s('flag'));
+                $msRows[$key] = $r;
                 $g->row++;
             }
             $sc('res', $x->t('fa.res'), (float) ($a['reservation_rate'] ?? 0), 'in_pct', $x->t('fa.instNote'));
@@ -157,7 +195,7 @@ final class FixedAssetSheet
             $sc('before', $x->t('fa.before'), 'IF(Z_OpIdx>='.$L('eIdx').','.$L('eIdx').',MAX(0,IF(Z_OpIdx=0,0,Z_OpIdx-1)))', 'lock_int', null, true);
             $sc('Fcap', $x->t('fa.Fcap'), 'MAX('.$L('before').','.$L('eIdx').')', 'lock_int', $x->t('fa.FcapNote'), true);
             $sc('T', $x->t('fa.T'), $L('Fcap').'+IF('.$L('eIdx').'='.$L('sIdx').',0,1)', 'lock_int', $x->t('fa.TNote'), true);
-            $sc('Dm', $x->t('fa.Dm'), $L('depYears').'*12', 'lock_int', null, true);
+            $sc('Dm', $x->t('fa.Dm'), 'IF('.$L('land').'=1,0,'.$L('depYears').'*12)', 'lock_int', null, true);
             $g->blank();
 
             // the loan repayment table, one row per instalment period
@@ -194,20 +232,30 @@ final class FixedAssetSheet
             // monthly
             $g->section($x->t('fa.monthly', $name));
             $g->monthHeader();
-            $keys = ['exec', 'payC', 'payI', 'pay', 'cp', 'eq', 'drawR', 'draw', 'cd', 'dwin', 'dbeg', 'dint', 'dend', 'dbs', 'sInt', 'sPay', 'sEnd', 'capi', 'upTot', 'upEnd', 'upTr', 'isr', 'grepl', 'gfin', 'ev', 'fr', 'to', 'dep', 'acc', 'nbv', 'dadm', 'dmfg'];
+            $keys = ['plan', 'exec', 'payC', 'payI', 'payM', 'pay', 'cp', 'eq', 'drawR', 'draw', 'cd', 'dwin', 'dbeg', 'dint', 'dend', 'dbs', 'sInt', 'sPay', 'sEnd', 'capi', 'upTot', 'upEnd', 'upTr', 'isr', 'grepl', 'gfin', 'ev', 'fr', 'to', 'dep', 'acc', 'nbv', 'dadm', 'dmfg'];
             foreach ($m->products as $i => $_) {
                 $keys[] = 'a'.$i;
             }
-            array_push($keys, 'pb', 'iis');
+            array_push($keys, 'dun', 'pb', 'iis');
             $g->plan(array_map(fn ($k) => $p.$k, $keys));
             $idx = fn (K $k) => $k->cal('idx');
             $R = fn (string $key) => $g->rng($p.$key);
 
-            $g->line($p.'exec', $x->t('fa.exec'), fn (K $k) => 'IF('.$L('dur').'=0,IF('.$idx($k).'='.$L('sIdx').','.$L('total').',0),IF(AND('.$idx($k).'>='.$L('sIdx').','.$idx($k).'<='.$L('eIdx').'),'.$L('total').'/'.$L('dur').',0))', ['total' => 'sum', 'bold' => true]);
+            // what the cost would be spent on if it were a construction (flat or on an S-curve); a machine is bought in its purchase month. The payments are worked out from this.
+            $g->line($p.'plan', $x->t('fa.plan'), function (K $k) use ($L, $idx) {
+                $i = $idx($k);
+                $s = $L('sIdx');
+                $d = $L('dur');
+                $curve = $L('total').'*(COS(PI()*('.$i.'-'.$s.')/'.$d.')-COS(PI()*('.$i.'-'.$s.'+1)/'.$d.'))/2';
+
+                return 'IF(OR('.$L('mach').'=1,'.$d.'=0),IF('.$i.'='.$s.','.$L('total').',0),IF(AND('.$i.'>='.$s.','.$i.'<='.$L('eIdx').'),IF('.$L('scv').'=1,'.$curve.','.$L('total').'/'.$d.'),0))';
+            }, ['total' => 'sum', 'note' => $x->t('fa.planNote')]);
+            // spent on the asset: a machine counts what is paid before the delivery when it is paid and the rest at the delivery
+            $g->line($p.'exec', $x->t('fa.exec'), fn (K $k) => 'IF('.$L('mach').'=1,IF('.$idx($k).'<'.$L('dIdx').','.$k->r($p.'pay').',IF('.$idx($k).'='.$L('dIdx').','.$L('total').'-'.$k->pr($p.'cp').',0)),'.$k->r($p.'plan').')', ['total' => 'sum', 'bold' => true, 'note' => $x->t('fa.execNote')]);
             $g->line($p.'payC', $x->t('fa.payC'), function (K $k) use ($x, $L, $R, $lineRows, $yes, $idx) {
                 $parts = [];
                 foreach ($lineRows as $lr) {
-                    $parts[] = 'IF($E$'.$lr.'="",0,$F$'.$lr.'/100*IF($G$'.$lr.'="'.$yes.'",IF('.$idx($k).'='.$L('sIdx').'+$H$'.$lr.','.$L('total').',0),'.$x->shift($R('exec'), '$H$'.$lr, $k->c).'))';
+                    $parts[] = 'IF($E$'.$lr.'="",0,$F$'.$lr.'/100*IF($G$'.$lr.'="'.$yes.'",IF('.$idx($k).'='.$L('sIdx').'+$H$'.$lr.','.$L('total').',0),'.$x->shift($R('plan'), '$H$'.$lr, $k->c).'))';
                 }
 
                 return implode('+', $parts);
@@ -222,7 +270,15 @@ final class FixedAssetSheet
                     ."+IF(AND({$L('after')}<>0,$i={$L('sIdx')}+{$L('after')}),{$L('contr')}/100*{$L('total')},0)"
                     ."+IF(AND($off>=0,MOD($off,{$L('istep')})=0,$off<MAX(1,INT({$L('icount')}))),MIN($each*{$L('istep')},$bal-$off/{$L('istep')}*$each*{$L('istep')}),0)";
             }, ['total' => 'sum', 'note' => $x->t('fa.payINote')]);
-            $g->line($p.'pay', $x->t('fa.pay'), fn (K $k) => 'IF('.$L('terms').'="'.$terms['cash'].'",'.$k->r($p.'exec').',IF('.$L('terms').'="'.$terms['customize'].'",'.$k->r($p.'payC').','.$k->r($p.'payI').'))', ['total' => 'sum', 'bold' => true]);
+            $g->line($p.'payM', $x->t('fa.payM'), function (K $k) use ($L, $idx, $msRows) {
+                $parts = [];
+                foreach (['purchase' => $L('sIdx'), 'delivery' => $L('dIdx'), 'ready' => $L('eIdx')] as $key => $base) {
+                    $parts[] = 'IF('.$idx($k).'='.$base.'+$H$'.$msRows[$key].',$F$'.$msRows[$key].'/100*'.$L('total').',0)';
+                }
+
+                return implode('+', $parts);
+            }, ['total' => 'sum', 'note' => $x->t('fa.payMNote')]);
+            $g->line($p.'pay', $x->t('fa.pay'), fn (K $k) => 'IF('.$L('terms').'="'.$terms['cash'].'",'.$k->r($p.'plan').',IF('.$L('terms').'="'.$terms['customize'].'",'.$k->r($p.'payC').',IF('.$L('terms').'="'.$terms['milestone'].'",'.$k->r($p.'payM').','.$k->r($p.'payI').')))', ['total' => 'sum', 'bold' => true]);
             $g->line($p.'cp', $x->t('fa.cp'), fn (K $k) => $k->pr($p.'cp').'+'.$k->r($p.'pay'));
             $g->line($p.'eq', $x->t('fa.eq'), fn (K $k) => 'MIN('.$k->r($p.'pay').',MAX(0,'.$L('eqAmt').'-'.$k->pr($p.'cp').'))', ['total' => 'sum', 'bold' => true]);
             $g->line($p.'drawR', $x->t('fa.drawR'), fn (K $k) => 'MAX(0,'.$k->r($p.'cp').'-'.$L('eqAmt').')-MAX(0,'.$k->pr($p.'cp').'-'.$L('eqAmt').')', ['total' => 'sum', 'note' => $x->t('fa.drawRNote')]);
@@ -255,11 +311,16 @@ final class FixedAssetSheet
                 $g->line($p.'a'.$i, $x->t('fa.toProduct', (string) ($pr['name'] ?? '')), function (K $k) use ($x, $g, $p, $i, $pctFirst, $pctLast, $yes, $L) {
                     $range = fn (string $c) => '$'.$c.'$'.$pctFirst.':$'.$c.'$'.$pctLast;
                     $row = $pctFirst + $i;
-                    $typed = ShareSheet::typed($k, '$E$'.$row, '$G$'.$row, $range('E'), $range('G'));
+                    $typed = ShareSheet::typed($k, '$E$'.$row, $range('E'), $i);
 
                     return '(LEN('.$L('name').')>0)*IF('.$L('rev').'="'.$yes.'",'.$x->x('share.rs'.$i, $k->c).",$typed)*".$k->r($p.'dmfg');
                 }, ['total' => 'sum']);
             }
+            $g->line($p.'dun', $x->t('fa.unalloc'), function (K $k) use ($m, $p, $L) {
+                $rows = array_map(fn ($i) => $k->r($p.'a'.$i), array_keys($m->products));
+
+                return '(LEN('.$L('name').')>0)*'.ShareSheet::left($k->r($p.'dmfg'), $rows === [] ? '0' : implode('+', $rows));
+            }, ['total' => 'sum', 'bold' => true]);
             $g->line($p.'pb', $x->t('fa.pb'), fn (K $k) => 'IF(ABS('.$k->pr($p.'pb').'+'.$k->r($p.'exec').'-'.$k->r($p.'pay').')<0.000001,0,'.$k->pr($p.'pb').'+'.$k->r($p.'exec').'-'.$k->r($p.'pay').')', ['bold' => true]);
             $g->line($p.'iis', $x->t('fa.iis'), fn (K $k) => 'IF('.$idx($k).'>='.$L('T').','.$k->r($p.'dint').',0)', ['total' => 'sum', 'note' => $x->t('fa.iisNote')]);
             $g->flush();

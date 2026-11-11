@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Models\FxRate;
 use App\Models\Product;
+use App\Models\ProductSegment;
 use App\Models\Project;
 use App\Models\Sensitivity;
 use App\Models\User;
@@ -16,6 +18,11 @@ use Illuminate\Support\Facades\DB;
 //    · sales target  ± %     every yearly quantity (local and export) is multiplied by (1 + %)
 //    · raw material  ± %     every "% of selling price" of the product's recipe is multiplied by (1 + %)
 //    · collection    + days  added to every "collected after … days" of the product's local and export collection terms
+//  One more setting for the whole study: FX rate +/- %, which moves every foreign currency rate of the FX forecast (so the export
+//  prices in the study currency move with it).
+//  Prices: "price +/- %" of the engine scales every price, foreign prices included; "sales target" scales the group quantities (the
+//  shares of the channels and markets stay); "collection + days" is added to the product's terms AND to the own terms of its channels
+//  and markets.
 //  The settings are saved in `sensitivities` (one row per study). To see their effect the WHOLE calculation is run again
 //  with the settings applied, inside a database transaction that is ALWAYS rolled back: the study itself never changes,
 //  and the scenario uses exactly the same engines as the real numbers (nothing is copied or approximated).
@@ -52,10 +59,22 @@ class SensitivityService
         return $rows;
     }
 
-    /** @param list<array{slot:string,target:float|int,rm:float|int,days:int}> $rows */
-    public function save(Project $project, User $user, array $rows): void
+    /** The saved FX rate change in %, 0 when none. */
+    public function fx(Project $project): float
+    {
+        return (float) (Sensitivity::where('project_id', $project->id)->value('fx_rate_change') ?? 0);
+    }
+
+    /**
+     * @param  list<array{slot:string,target:float|int,rm:float|int,days:int}>  $rows
+     * @param  float|null  $fx  the FX rate change in %; null leaves the saved one as it is
+     */
+    public function save(Project $project, User $user, array $rows, ?float $fx = null): void
     {
         $values = ['user_id' => $user->id];
+        if ($fx !== null) {
+            $values['fx_rate_change'] = $fx;
+        }
         foreach (self::SLOTS as $slot) {
             $values["target_product_$slot"] = 0;
             $values["rm_product_$slot"] = 0;
@@ -70,8 +89,12 @@ class SensitivityService
         Sensitivity::updateOrCreate(['project_id' => $project->id], $values);
     }
 
-    public function hasChanges(array $rows): bool
+    public function hasChanges(array $rows, float $fx = 0.0): bool
     {
+        if ($fx != 0) {
+            return true;
+        }
+
         foreach ($rows as $row) {
             if ($row['target'] != 0 || $row['rm'] != 0 || $row['days'] != 0) {
                 return true;
@@ -87,7 +110,7 @@ class SensitivityService
      * @param  list<array{id:int,target:float|int,rm:float|int,days:int}>  $rows
      * @return array{base:array<string,mixed>,scenario:array<string,mixed>}
      */
-    public function compare(Project $project, array $rows): array
+    public function compare(Project $project, array $rows, float $fx = 0.0): array
     {
         $timeline = $this->calculations->timeline($project);
         $base = $this->dashboards->present($this->dashboards->build($project, $timeline), $project, $timeline);
@@ -95,7 +118,7 @@ class SensitivityService
         DB::beginTransaction();
 
         try {
-            $this->apply($project, $rows);
+            $this->apply($project, $rows, $fx);
             $fresh = Project::findOrFail($project->id);
             $this->calculations->recalculate($fresh);
             $scenario = $this->dashboards->present($this->dashboards->build($fresh, $timeline), $fresh, $timeline);
@@ -109,8 +132,15 @@ class SensitivityService
     // ── Applying the settings (always inside the transaction of compare()) ──
 
     /** @param list<array{id:int,target:float|int,rm:float|int,days:int}> $rows */
-    private function apply(Project $project, array $rows): void
+    private function apply(Project $project, array $rows, float $fx = 0.0): void
     {
+        if ($fx != 0) {
+            $factor = 1 + $fx / 100;
+            foreach (FxRate::where('project_id', $project->id)->get() as $row) {
+                $row->update(['rates' => self::scale((array) $row->rates, $factor)]);
+            }
+        }
+
         foreach ($rows as $row) {
             $product = Product::where('project_id', $project->id)->find($row['id']);
             if ($product === null) {
@@ -128,6 +158,12 @@ class SensitivityService
             }
             if ($changes !== []) {
                 $product->update($changes);
+            }
+            if ($row['days'] != 0) {
+                // A channel or market that has its own terms is delayed too.
+                foreach (ProductSegment::where('product_id', $product->id)->where('uses_own_terms', true)->get() as $segment) {
+                    $segment->update(['collection_policy_value' => self::delayPeriods((array) $segment->collection_policy_value, (int) $row['days'])]);
+                }
             }
 
             if ($row['rm'] != 0) {
@@ -158,15 +194,30 @@ class SensitivityService
     public static function delay(array $policy, int $days): array
     {
         foreach (['local', 'export'] as $kind) {
-            foreach ((array) ($policy[$kind] ?? []) as $year => $terms) {
-                foreach ((array) ($terms['due_in_days'] ?? []) as $n => $due) {
-                    if ($due !== null && $due !== '') {
-                        $policy[$kind][$year]['due_in_days'][$n] = max(0, (int) $due + $days);
-                    }
-                }
+            if (isset($policy[$kind])) {
+                $policy[$kind] = self::delayPeriods((array) $policy[$kind], $days);
             }
         }
 
         return $policy;
+    }
+
+    /**
+     * Days added to every due date of one set of terms (a list: first operation year, following years), never below 0.
+     *
+     * @param  array<int,array<string,mixed>>  $periods
+     * @return array<int,array<string,mixed>>
+     */
+    public static function delayPeriods(array $periods, int $days): array
+    {
+        foreach ($periods as $year => $terms) {
+            foreach ((array) ($terms['due_in_days'] ?? []) as $n => $due) {
+                if ($due !== null && $due !== '') {
+                    $periods[$year]['due_in_days'][$n] = max(0, (int) $due + $days);
+                }
+            }
+        }
+
+        return $periods;
     }
 }

@@ -115,6 +115,29 @@ describe('dashboard', () => {
         expect(overview.textContent).toContain('5,000');
     });
 
+    it('shows the sales of every channel and every market when the study has them, and nothing extra when it has none', async () => {
+        const none = await mount(DashboardView, { dashboard: withDcf(), currency: 'EGP' });
+        expect(none.querySelector('[data-block="sales"]')).toBeNull();
+
+        const breakdown = {
+            local: [{ name: 'Supermarkets', values: [600, 700] }, { name: 'Wholesalers', values: [200, 250] }],
+            export: [{ name: 'Saudi Arabia', values: [200, 250] }],
+        };
+        const el = await mount(DashboardView, { dashboard: withDcf({ sales_breakdown: breakdown }), currency: 'EGP' });
+        const block = el.querySelector('[data-section="overview"] [data-block="sales"]');
+
+        expect(block).not.toBeNull();
+        expect(block.querySelector('[data-chart="sales-local"]')).not.toBeNull();
+        expect(block.querySelector('[data-chart="sales-export"]')).not.toBeNull();
+        expect(block.textContent).toContain('Supermarkets');
+        expect(block.textContent).toContain('Saudi Arabia');
+        expect(block.querySelector('[data-table="sales-local"]').textContent).toContain('700');
+
+        // only local channels: no export chart
+        const onlyLocal = await mount(DashboardView, { dashboard: withDcf({ sales_breakdown: { local: breakdown.local, export: [] } }), currency: 'EGP' });
+        expect(onlyLocal.querySelector('[data-chart="sales-export"]')).toBeNull();
+    });
+
     it('puts the Investment Structure card at the left of the free cash flow bar chart in the valuation tab', async () => {
         const el = await mount(DashboardView, { dashboard: withDcf(), currency: 'EGP' });
         el.querySelector('[data-tab="value"]').click();

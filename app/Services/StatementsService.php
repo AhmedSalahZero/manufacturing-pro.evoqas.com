@@ -180,6 +180,18 @@ class StatementsService
         foreach ($openAssets as $asset) {
             $adminDepreciation[] = $this->jd($asset->admin_depreciations);
         }
+        // Machine depreciation, staff cost and expenses that no product took (no product was making or selling that month) are general
+        // expenses of that month; they return to the products as soon as one makes or sells again.
+        foreach (['unallocated_depreciation', 'unallocated_opening_depreciation'] as $column) {
+            if (! empty($project->{$column})) {
+                $adminDepreciation[] = $this->jd($project->{$column});
+            }
+        }
+        foreach ((array) ($project->unallocated_costs ?? []) as $series) {
+            if (! empty($series)) {
+                $byCategory['general-expenses'][] = $this->jd($series);
+            }
+        }
         if ($adminDepreciation !== []) {
             $byCategory['general-expenses'][] = $sum($adminDepreciation);
         }

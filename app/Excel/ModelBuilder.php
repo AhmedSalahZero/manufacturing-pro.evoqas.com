@@ -13,6 +13,7 @@ use App\Excel\Sheets\RawMaterialSheet;
 use App\Excel\Sheets\ShareSheet;
 use App\Excel\Sheets\StatementsSheet;
 use App\Excel\Sheets\SalesSheet;
+use App\Excel\Sheets\FxSheet;
 use App\Excel\Sheets\StudySheet;
 
 // Builds the whole workbook of a study from its saved rows (see ModelData).
@@ -27,6 +28,7 @@ final class ModelBuilder
 
         StudySheet::study($x);
         StudySheet::calendar($x);
+        FxSheet::build($x);
         foreach ($x->m->products as $i => $_) {
             SalesSheet::build($x, $i);
         }
@@ -44,7 +46,7 @@ final class ModelBuilder
 
         // the tabs: order and colour (yellow = inputs, grey = working, blue = statements, green = results)
         $x->wb->order(array_map(fn ($k) => $x->sheets[$k], CoverSheet::order($x)));
-        $inputs = ['study', 'rm', 'mp', 'exp', 'fa', 'ob'];
+        $inputs = ['study', 'fx', 'rm', 'mp', 'exp', 'fa', 'ob'];
         foreach ($x->sheets as $key => $sheet) {
             if (in_array($key, $inputs, true) || preg_match('/^s\d+$/', $key)) {
                 $sheet->tab('FFE3C968');

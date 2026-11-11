@@ -37,6 +37,15 @@ return [
         'rawMaterials.*.measurement_unit'           => 'وحدة قياس المادة الخام',
         'rawMaterials.*.vat_rate'                   => 'نسبة ضريبة القيمة المضافة للمادة الخام',
         'rawMaterials.*.withhold_tax_rate'          => 'نسبة الخصم من المنبع للمادة الخام',
+        'sales_channels'                            => 'قنوات البيع',
+        'sales_channels.*.name'                     => 'اسم القناة',
+        'export_markets'                            => 'أسواق التصدير',
+        'export_markets.*.name'                     => 'اسم الدولة',
+        'export_markets.*.currency'                 => 'عملة السوق',
+        'fx_rates'                                  => 'العملات الأجنبية',
+        'fx_rates.*.currency'                       => 'العملة الأجنبية',
+        'fx_rates.*.rates.*'                        => 'سعر الصرف',
+        'has_export_sales'                          => 'مبيعات التصدير',
     ],
 
     'validation' => [
@@ -65,6 +74,29 @@ return [
         'rawMaterials.*.name.required'             => 'من فضلك أدخل اسم المادة الخام.',
         'rawMaterials.*.measurement_unit.required' => 'من فضلك اختر وحدة قياس المادة الخام.',
         'rawMaterials.*.rm_inventory_coverage_days.required' => 'من فضلك اختر أيام تغطية المخزون.',
+        'sales_channels.max'                       => 'يمكنك إضافة :max قنوات بيع كحد أقصى.',
+        'sales_channels.*.name.required'           => 'من فضلك أدخل اسم القناة.',
+        'sales_channels.*.name.distinct'           => 'يوجد اسمان متطابقان للقنوات.',
+        'export_markets.max'                       => 'يمكنك إضافة :max أسواق تصدير كحد أقصى.',
+        'export_markets.*.name.required'           => 'من فضلك أدخل اسم الدولة.',
+        'export_markets.*.name.distinct'           => 'يوجد اسمان متطابقان للأسواق.',
+        'export_markets.*.currency.required'       => 'من فضلك اختر عملة السوق.',
+        'export_markets.*.currency.in'             => 'من فضلك اختر عملة صحيحة.',
+        'fx_rates.max'                             => 'يمكنك اختيار :max عملات أجنبية كحد أقصى.',
+        'fx_rates.*.currency.not_in'               => 'لا يمكن أن تكون عملة الدراسة عملة أجنبية.',
+        'fx_rates.*.currency.distinct'             => 'هذه العملة مختارة مرتين.',
+        'fx_rates.*.rates.*.required'              => 'أدخل سعر الصرف لهذه السنة.',
+        'fx_rates.*.rates.*.numeric'               => 'يجب أن يكون سعر الصرف رقماً.',
+        'fx_rates.*.rates.*.gt'                    => 'يجب أن يكون سعر الصرف أكبر من صفر.',
+    ],
+
+    // رسائل بطاقة قنوات البيع والتصدير (نموذج الدراسة).
+    'sales' => [
+        'needCurrency'   => 'اختر عملة أجنبية واحدة على الأقل لمبيعات التصدير.',
+        'marketCurrency' => 'عملة هذا السوق ليست من العملات الأجنبية المختارة في الدراسة.',
+        'exportInUse'    => 'ما زال لهذه المنتجات كمية تصدير: :products. أكّد إيقاف التصدير لتصبح كمية التصدير صفراً.',
+        'channelInUse'   => 'لا يمكن حذف القناة ":name": تستخدمها المنتجات التالية: :products.',
+        'marketInUse'    => 'لا يمكن حذف السوق ":name": تستخدمه المنتجات التالية: :products.',
     ],
 
     'share' => [

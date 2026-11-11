@@ -135,6 +135,17 @@ class ProjectController extends Controller
                 'vat_rate'                   => $m->vat_rate,
                 'withhold_tax_rate'          => $m->withhold_tax_rate,
             ])->values(),
+            'sales' => [
+                'has_export_sales' => (bool) $project->has_export_sales,
+                'channels'         => $project->salesChannels()->get()->map(fn ($c) => ['id' => $c->id, 'name' => $c->name])->values(),
+                'markets'          => $project->exportMarkets()->get()->map(fn ($m) => ['id' => $m->id, 'name' => $m->name, 'currency' => $m->currency])->values(),
+                // year index => rate, as typed (0 = the year the study starts in)
+                'fx'               => $project->fxRates()->get()->map(fn ($r) => ['currency' => $r->currency, 'rates' => (object) ($r->rates ?? [])])->values(),
+                // Products that still have export quantity: switching export off needs the user's confirmation (R1.6).
+                'exportProducts'   => $project->products()->orderBy('id')->get()
+                    ->filter(fn ($p) => collect((array) $p->export_target_quantities)->contains(fn ($q) => (float) $q > 0))
+                    ->pluck('name')->values(),
+            ],
             'readOnly' => Gate::forUser($request->user())->denies('update', $project),
             'sectors' => BusinessSector::orderBy('id')->get(['id', 'name_en', 'name_ar']),
             'options' => [
@@ -143,6 +154,9 @@ class ProjectController extends Controller
                 'coverageDays'     => $study['rm_coverage_days'],
                 'minYears'         => $study['min_years'],
                 'maxYears'         => $study['max_years'],
+                'maxChannels'      => $study['max_channels'],
+                'maxMarkets'       => $study['max_markets'],
+                'maxCurrencies'    => $study['max_foreign_currencies'],
             ],
         ]);
     }

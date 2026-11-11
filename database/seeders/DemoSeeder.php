@@ -52,6 +52,12 @@ class DemoSeeder extends Seeder
 
     private User $user;
 
+    /** 1 or 2: the study being built (decides its channels, markets and rates). */
+    private int $study = 1;
+
+    /** The channels and markets of the study being built, with their ids (set once the study is saved). @var array<string,mixed>|null */
+    private ?array $plan = null;
+
     public function run(): void
     {
         $this->call(BusinessSectorSeeder::class);
@@ -101,6 +107,7 @@ class DemoSeeder extends Seeder
 
     private function newFactory(string $name): Project
     {
+        $this->study = 1;
         $project = app(ProjectService::class)->create($this->user, $name);
         $sector = BusinessSector::query()->where('name_en', 'Food & Beverage')->value('id');
 
@@ -109,6 +116,7 @@ class DemoSeeder extends Seeder
             'intro_paragraph' => 'A new factory in 10th of Ramadan City making packaged orange juice, butter biscuits, canned fava beans and frozen mixed vegetables for local supermarkets, wholesalers and export customers. Construction and installation take the first three months of 2027; production starts in April 2027.',
             'start_date' => '2027-01', 'duration' => 5, 'operation_start_date' => '2027-04',
             'tax_rate' => 22.5, 'return_rate' => 20, 'perpetual_growth_rate' => 3,
+            ...$this->salesSettings(1),
             'products' => [
                 ['name' => 'Orange Juice 1L', 'measurement_unit' => 'carton', 'selling_start_date' => '2027-04', 'vat_rate' => 14, 'withhold_tax_rate' => 1],
                 ['name' => 'Butter Biscuits', 'measurement_unit' => 'box', 'selling_start_date' => '2027-04', 'vat_rate' => 14, 'withhold_tax_rate' => 1],
@@ -126,6 +134,7 @@ class DemoSeeder extends Seeder
 
         $p = $this->idsByName($project->products());
         $m = $this->idsByName($project->rawMaterials());
+        $this->plan = $this->salesPlan($project, $this->study);
         $flat = ['type' => 'flat'];
         $juiceMonths = ['type' => 'monthly', 'monthly' => [5, 5, 6, 8, 10, 12, 13, 12, 9, 7, 7, 6]];
         $biscuitQuarters = ['type' => 'quarterly', 'quarterly' => [22, 22, 24, 32]];
@@ -206,12 +215,16 @@ class DemoSeeder extends Seeder
         ]);
 
         $this->saveAssets($project, [
-            $this->asset('Factory building and land', 1, 24000000, 20, '2027-01', '2027-03', ['admin_depreciation_percentage' => 10, 'equity_funding_rate' => 50, 'interest_rate' => 18, 'grace_period' => 12, 'tenor' => 84, 'installment_interval' => 'quarterly']),
-            $this->asset('Juice production line', 1, 14000000, 10, '2027-02', '2027-03', ['equity_funding_rate' => 60, 'interest_rate' => 18, 'grace_period' => 6, 'tenor' => 60, 'installment_interval' => 'quarterly', 'is_as_revenue_percentages' => false, 'allocations' => [$p['Orange Juice 1L'] => 100, $p['Butter Biscuits'] => 0, $p['Canned Fava Beans'] => 0, $p['Frozen Mixed Vegetables'] => 0]]),
-            $this->asset('Biscuit production line', 1, 11000000, 10, '2027-02', '2027-03', ['is_as_revenue_percentages' => false, 'allocations' => [$p['Orange Juice 1L'] => 0, $p['Butter Biscuits'] => 100, $p['Canned Fava Beans'] => 0, $p['Frozen Mixed Vegetables'] => 0]]),
-            $this->asset('Canning and freezing equipment', 2, 6500000, 10, '2027-02', '2027-03', ['payment_terms' => 'customize', 'custom' => [['due_days' => 0, 'rate' => 30, 'from_total' => false], ['due_days' => 90, 'rate' => 40, 'from_total' => false], ['due_days' => 180, 'rate' => 30, 'from_total' => false]], 'is_as_revenue_percentages' => false, 'allocations' => [$p['Orange Juice 1L'] => 0, $p['Butter Biscuits'] => 0, $p['Canned Fava Beans'] => 40, $p['Frozen Mixed Vegetables'] => 60]]),
-            $this->asset('Delivery vehicles', 6, 900000, 5, '2027-03', '2027-03', ['admin_depreciation_percentage' => 0]),
-            $this->asset('Laboratory and office equipment', 1, 1500000, 5, '2027-01', '2027-03', ['admin_depreciation_percentage' => 100]),
+            // land: bought on one date, never depreciated, half paid at once and half after 60 days
+            $this->asset('Factory land', 1, 6000000, 0, '2027-01', '2027-01', ['asset_type' => 'land', 'payment_terms' => 'customize', 'custom' => [['due_days' => 0, 'rate' => 50, 'from_total' => false], ['due_days' => 60, 'rate' => 50, 'from_total' => false]]]),
+            // construction: spent on an S-curve; a 25% down payment on the total price, then 50% and 25% of each month's work after 30 and 60 days
+            $this->asset('Factory building', 1, 18000000, 20, '2027-01', '2027-03', ['asset_type' => 'construction', 'execution_curve' => 's_curve', 'admin_depreciation_percentage' => 10, 'payment_terms' => 'customize', 'custom' => [['due_days' => 0, 'rate' => 25, 'from_total' => true], ['due_days' => 30, 'rate' => 50, 'from_total' => false], ['due_days' => 60, 'rate' => 25, 'from_total' => false]], 'equity_funding_rate' => 50, 'interest_rate' => 18, 'grace_period' => 12, 'tenor' => 84, 'installment_interval' => 'quarterly']),
+            // machines: ordered in January, delivered in February, ready (installed and tested) in March; paid by milestones
+            $this->asset('Juice production line', 1, 14000000, 10, '2027-01', '2027-03', ['asset_type' => 'machine', 'delivery' => '2027-02', 'payment_terms' => 'milestone', 'milestones' => $this->milestones(50, 30, 20), 'equity_funding_rate' => 60, 'interest_rate' => 18, 'grace_period' => 6, 'tenor' => 60, 'installment_interval' => 'quarterly', 'is_as_revenue_percentages' => false, 'allocations' => [$p['Orange Juice 1L'] => 100, $p['Butter Biscuits'] => 0, $p['Canned Fava Beans'] => 0, $p['Frozen Mixed Vegetables'] => 0]]),
+            $this->asset('Biscuit production line', 1, 11000000, 10, '2027-01', '2027-03', ['asset_type' => 'machine', 'delivery' => '2027-02', 'payment_terms' => 'milestone', 'milestones' => $this->milestones(30, 50, 20, 0, 30), 'is_as_revenue_percentages' => false, 'allocations' => [$p['Orange Juice 1L'] => 0, $p['Butter Biscuits'] => 100, $p['Canned Fava Beans'] => 0, $p['Frozen Mixed Vegetables'] => 0]]),
+            $this->asset('Canning and freezing equipment', 2, 6500000, 10, '2027-02', '2027-03', ['asset_type' => 'machine', 'delivery' => '2027-03', 'payment_terms' => 'customize', 'custom' => [['due_days' => 0, 'rate' => 30, 'from_total' => false], ['due_days' => 90, 'rate' => 40, 'from_total' => false], ['due_days' => 180, 'rate' => 30, 'from_total' => false]], 'is_as_revenue_percentages' => false, 'allocations' => [$p['Orange Juice 1L'] => 0, $p['Butter Biscuits'] => 0, $p['Canned Fava Beans'] => 40, $p['Frozen Mixed Vegetables'] => 60]]),
+            $this->asset('Delivery vehicles', 6, 900000, 5, '2027-03', '2027-03', ['asset_type' => 'other', 'admin_depreciation_percentage' => 0]),
+            $this->asset('Laboratory and office equipment', 1, 1500000, 5, '2027-02', '2027-02', ['asset_type' => 'other', 'admin_depreciation_percentage' => 100]),
         ]);
 
         $this->extras($project, [
@@ -228,6 +241,7 @@ class DemoSeeder extends Seeder
 
     private function expansion(string $name): Project
     {
+        $this->study = 2;
         $project = app(ProjectService::class)->create($this->user, $name);
         $sector = BusinessSector::query()->where('name_en', 'Food & Beverage')->value('id');
 
@@ -236,6 +250,7 @@ class DemoSeeder extends Seeder
             'intro_paragraph' => 'A running factory in Sadat City that makes tomato paste, pasta and mango juice. The plan adds a new pasta production line and a tomato processing expansion in 2026, a bigger warehouse by early 2027 and renews the delivery fleet in 2028. The opening balances are the figures of the factory on 1 January 2026.',
             'start_date' => '2026-01', 'duration' => 5, 'operation_start_date' => '2026-01',
             'tax_rate' => 22.5, 'return_rate' => 18, 'perpetual_growth_rate' => 3,
+            ...$this->salesSettings(2),
             'products' => [
                 ['name' => 'Tomato Paste 800g', 'measurement_unit' => 'carton', 'selling_start_date' => '2026-01', 'vat_rate' => 14, 'withhold_tax_rate' => 1],
                 ['name' => 'Pasta 400g', 'measurement_unit' => 'carton', 'selling_start_date' => '2026-01', 'vat_rate' => 14, 'withhold_tax_rate' => 1],
@@ -251,6 +266,7 @@ class DemoSeeder extends Seeder
 
         $p = $this->idsByName($project->products());
         $m = $this->idsByName($project->rawMaterials());
+        $this->plan = $this->salesPlan($project, $this->study);
 
         // Finished goods already in the warehouse on the first day (they are part of the opening balance sheet).
         $mix = ['raw_material_value' => ['percentage' => 70], 'direct_labor_value' => ['percentage' => 12], 'manufacturing_overheads_value' => ['percentage' => 18]];
@@ -320,10 +336,11 @@ class DemoSeeder extends Seeder
         ]);
 
         $this->saveAssets($project, [
-            $this->asset('New pasta production line', 1, 38000000, 10, '2026-03', '2026-08', ['equity_funding_rate' => 50, 'interest_rate' => 17, 'grace_period' => 6, 'tenor' => 72, 'installment_interval' => 'quarterly', 'is_as_revenue_percentages' => false, 'allocations' => [$p['Tomato Paste 800g'] => 0, $p['Pasta 400g'] => 100, $p['Mango Juice 200ml'] => 0]]),
-            $this->asset('Tomato processing expansion', 1, 14000000, 10, '2026-04', '2026-08', ['payment_terms' => 'customize', 'custom' => [['due_days' => 0, 'rate' => 40, 'from_total' => false], ['due_days' => 60, 'rate' => 30, 'from_total' => false], ['due_days' => 120, 'rate' => 30, 'from_total' => false]], 'is_as_revenue_percentages' => false, 'allocations' => [$p['Tomato Paste 800g'] => 70, $p['Pasta 400g'] => 0, $p['Mango Juice 200ml'] => 30]]),
-            $this->asset('Warehouse expansion', 1, 12000000, 20, '2026-09', '2027-02', ['admin_depreciation_percentage' => 20, 'equity_funding_rate' => 100]),
-            $this->asset('Delivery fleet renewal', 4, 950000, 5, '2028-01', '2028-01', []),
+            $this->asset('New pasta production line', 1, 38000000, 10, '2026-03', '2026-08', ['asset_type' => 'machine', 'delivery' => '2026-06', 'payment_terms' => 'milestone', 'milestones' => $this->milestones(30, 50, 20, 0, 30), 'equity_funding_rate' => 50, 'interest_rate' => 17, 'grace_period' => 6, 'tenor' => 72, 'installment_interval' => 'quarterly', 'is_as_revenue_percentages' => false, 'allocations' => [$p['Tomato Paste 800g'] => 0, $p['Pasta 400g'] => 100, $p['Mango Juice 200ml'] => 0]]),
+            $this->asset('Tomato processing expansion', 1, 14000000, 10, '2026-04', '2026-08', ['asset_type' => 'machine', 'delivery' => '2026-06', 'payment_terms' => 'customize', 'custom' => [['due_days' => 0, 'rate' => 40, 'from_total' => false], ['due_days' => 60, 'rate' => 30, 'from_total' => false], ['due_days' => 120, 'rate' => 30, 'from_total' => false]], 'is_as_revenue_percentages' => false, 'allocations' => [$p['Tomato Paste 800g'] => 70, $p['Pasta 400g'] => 0, $p['Mango Juice 200ml'] => 30]]),
+            $this->asset('Warehouse land', 1, 3000000, 0, '2026-08', '2026-08', ['asset_type' => 'land', 'payment_terms' => 'customize', 'custom' => [['due_days' => 0, 'rate' => 50, 'from_total' => false], ['due_days' => 30, 'rate' => 50, 'from_total' => false]]]),
+            $this->asset('Warehouse expansion', 1, 12000000, 20, '2026-09', '2027-02', ['asset_type' => 'construction', 'execution_curve' => 's_curve', 'admin_depreciation_percentage' => 20, 'equity_funding_rate' => 100, 'payment_terms' => 'customize', 'custom' => [['due_days' => 0, 'rate' => 25, 'from_total' => true], ['due_days' => 30, 'rate' => 50, 'from_total' => false], ['due_days' => 60, 'rate' => 25, 'from_total' => false]]]),
+            $this->asset('Delivery fleet renewal', 4, 950000, 5, '2028-01', '2028-01', ['asset_type' => 'other']),
         ]);
 
         $this->saveOpeningBalances($project);
@@ -431,12 +448,90 @@ class DemoSeeder extends Seeder
             'rawMaterials'                      => array_map(fn ($line) => ['raw_material_id' => $line[0], 'percentages' => array_fill(0, 5, $line[1])], $o['recipe']),
             'after'                             => 'stay',
         ];
+        if ($this->plan !== null) {
+            $data += $this->productSales($o);
+        }
         foreach ($o['existing'] ?? [] as $key => $value) {
             $data[$key] = $value;
         }
 
         $product = $project->products()->whereKey($productId)->firstOrFail();
         app(ProductPlanService::class)->save($project, $product, $this->validated(UpdateProductRequest::class, $data, $project));
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  Sales channels, export markets and exchange rates (the same for every product of a study; the share of each product differs a little)
+    // ══════════════════════════════════════════════════════════════════
+
+    /** Local channels: name, share %, price difference %, own collection terms (null = the product's terms). Markets: name, currency, share %, own terms. */
+    private function salesDefinition(int $study): array
+    {
+        $own = fn (array $t) => $this->terms($t, $t);
+
+        return $study === 1
+            ? [
+                'channels' => [['Supermarkets', 45, 4, null], ['Wholesalers', 35, 0, $own([40, 60, 0, 30, 60])], ['Food service', 20, -3, null]],
+                'markets'  => [['Saudi Arabia', 'sar', 50, $own([0, 100, 0, 90, 60])], ['UAE', 'aed', 30, null], ['Italy', 'euro', 20, $own([50, 50, 0, 60, 60])]],
+                'fx'       => ['sar' => [13.3, 14.0, 14.7, 15.4, 16.1], 'aed' => [13.6, 14.3, 15.0, 15.8, 16.5], 'euro' => [57, 60, 63, 66, 69]],
+            ]
+            : [
+                'channels' => [['Supermarkets', 60, 3, null], ['Wholesalers', 40, -2, $own([30, 70, 0, 45, 60])]],
+                'markets'  => [['Saudi Arabia', 'sar', 65, null], ['Italy', 'euro', 35, $own([50, 50, 0, 60, 60])]],
+                'fx'       => ['sar' => [13.0, 13.7, 14.4, 15.1, 15.8], 'euro' => [55, 58, 61, 64, 67]],
+            ];
+    }
+
+    /** The study form's sales part: export on, the currencies with their yearly rates, the channels and the markets. */
+    private function salesSettings(int $study): array
+    {
+        $d = $this->salesDefinition($study);
+
+        return [
+            'has_export_sales' => true,
+            'sales_channels'   => array_map(fn ($c) => ['name' => $c[0]], $d['channels']),
+            'fx_rates'         => array_map(fn ($currency, $rates) => ['currency' => $currency, 'rates' => $rates], array_keys($d['fx']), $d['fx']),
+            'export_markets'   => array_map(fn ($m) => ['name' => $m[0], 'currency' => $m[1]], $d['markets']),
+        ];
+    }
+
+    /** The ids the products need once the study is saved. @return array<string,mixed> */
+    private function salesPlan(Project $project, int $study): array
+    {
+        $d = $this->salesDefinition($study);
+
+        return [
+            'definition' => $d,
+            'channels'   => $project->salesChannels()->pluck('id', 'name')->all(),
+            'markets'    => $project->exportMarkets()->pluck('id', 'name')->all(),
+        ];
+    }
+
+    /**
+     * What a product sends for its channels and markets. The foreign price is the product's export price turned into the market's currency
+     * at the first year's rate, then it grows 2% a year (the rate does the rest).
+     *
+     * @param  array<string,mixed>  $o
+     * @return array<string,mixed>
+     */
+    private function productSales(array $o): array
+    {
+        $d = $this->plan['definition'];
+        $each = fn ($value) => array_fill(0, 5, $value);
+
+        return [
+            'export_seasonality' => $o['export_seasonality'] ?? ['type' => 'flat'],
+            'segments' => [
+                'local'  => array_map(fn ($c) => [
+                    'sales_channel_id' => $this->plan['channels'][$c[0]], 'allocation_percentages' => $each($c[1]), 'price_differences' => $each($c[2]),
+                    'uses_own_terms' => $c[3] !== null, 'collection_policy_value' => $c[3],
+                ], $d['channels']),
+                'export' => array_map(fn ($m) => [
+                    'export_market_id' => $this->plan['markets'][$m[0]], 'allocation_percentages' => $each($m[2]),
+                    'first_foreign_price' => round($o['export_price'] / $d['fx'][$m[1]][0], 2), 'foreign_growth_rates' => [0, 2, 2, 2, 2],
+                    'uses_own_terms' => $m[3] !== null, 'collection_policy_value' => $m[3],
+                ], $d['markets']),
+            ],
+        ];
     }
 
     /** @param array<int,array<int,array<string,mixed>>> $policies raw material id => [period => terms] */
@@ -579,6 +674,16 @@ class DemoSeeder extends Seeder
     }
 
     /** @param array<string,mixed> $over */
+    /** A machine paid by milestones: % at the purchase, % at the delivery, % when it is ready (the last two optionally some days later). */
+    private function milestones(int $purchase, int $delivery, int $ready, int $deliveryDays = 0, int $readyDays = 0): array
+    {
+        return [
+            'purchase' => ['rate' => $purchase, 'days' => 0],
+            'delivery' => ['rate' => $delivery, 'days' => $deliveryDays],
+            'ready'    => ['rate' => $ready, 'days' => $readyDays],
+        ];
+    }
+
     private function asset(string $name, int $counts, int $amount, int $years, string $start, string $end, array $over): array
     {
         return array_merge([

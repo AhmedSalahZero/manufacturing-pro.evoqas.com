@@ -28,6 +28,8 @@ final class ModelData
     public readonly array $expenses;
     public readonly array $assets;
     public readonly array $opening;
+    /** @var list<array{currency:string,rates:array<int,float>}> exchange rates of the study (empty when the study has no export sales) */
+    public readonly array $fx;
 
     /** @param array<string,mixed> $dump */
     public function __construct(array $dump)
@@ -55,6 +57,13 @@ final class ModelData
         $this->expenses = array_values($dump['expenses'] ?? []);
         $this->assets = array_values($dump['fixed_assets'] ?? []);
         $this->opening = $dump['opening'] ?? [];
+        $this->fx = array_values($dump['fx_rates'] ?? []);
+    }
+
+    /** The currency as the screens show it (the euro is stored as 'euro'). */
+    public static function currencyName(string $code): string
+    {
+        return $code === 'euro' ? 'EUR' : strtoupper($code);
     }
 
     /** Excel serial number of the first of a grid month. */

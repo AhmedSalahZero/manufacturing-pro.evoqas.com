@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Calculations\OpeningBalanceCalculator;
+use App\Calculations\SegmentCalculator;
 use App\Calculations\Timeline;
+use App\Models\Product;
 use App\Models\Project;
 use App\Support\StudyCalendar;
 
@@ -135,9 +137,9 @@ class ReportInputsService
     {
         $startYear = (int) $project->start_date->format('Y');
         $periods = $project->duration > 1 ? 2 : 1;
-        $blocks = [];
+        $blocks = $this->fxBlocks($project, $startYear);
 
-        foreach ($project->products()->with('seasonality')->orderBy('id')->get() as $product) {
+        foreach ($project->products()->with(['seasonality', 'exportSeasonality'])->orderBy('id')->get() as $product) {
             $years = $this->plans->viewYears($project, $product);
             $name = $product->name.($product->measurement_unit ? ' ('.$product->measurement_unit.')' : '');
             $num = fn ($v) => (float) $v;
@@ -177,6 +179,8 @@ class ReportInputsService
                 $blocks[] = $this->table($this->k('products.season.title'), $headers, [array_merge([''], array_map($pctf, $values))]);
             }
 
+            array_push($blocks, ...$this->segmentBlocks($project, $product, $years, $startYear, $pctf));
+
             $inventoryHead = [$this->k('products.inventory.coverage')];
             $inventoryRow = [$this->k('terms.days', ['n' => (int) ($product->fg_inventory_coverage_days ?? 30)])];
             if (! $project->new_company) {
@@ -196,6 +200,22 @@ class ReportInputsService
                     $p = ((array) ($policy[$channel] ?? []))[$i] ?? [];
                     $policyRows[] = [
                         $this->k('products.collection.'.$channel),
+                        $this->k($i === 0 ? 'products.collection.firstYear' : 'products.collection.laterYears'),
+                        $this->pct($p['cash_payment'] ?? 100),
+                        $this->pct($p['rate'][0] ?? 0), $this->k('terms.days', ['n' => (int) ($p['due_in_days'][0] ?? 30)]),
+                        $this->pct($p['rate'][1] ?? 0), $this->k('terms.days', ['n' => (int) ($p['due_in_days'][1] ?? 60)]),
+                    ];
+                }
+            }
+            // a channel or market with terms of its own
+            foreach ($product->segments()->with(['salesChannel', 'exportMarket'])->orderBy('id')->get() as $segment) {
+                if (! $segment->uses_own_terms) {
+                    continue;
+                }
+                for ($i = 0; $i < $periods; $i++) {
+                    $p = ((array) $segment->collection_policy_value)[$i] ?? [];
+                    $policyRows[] = [
+                        (string) ($segment->kind === 'local' ? $segment->salesChannel?->name : $segment->exportMarket?->name),
                         $this->k($i === 0 ? 'products.collection.firstYear' : 'products.collection.laterYears'),
                         $this->pct($p['cash_payment'] ?? 100),
                         $this->pct($p['rate'][0] ?? 0), $this->k('terms.days', ['n' => (int) ($p['due_in_days'][0] ?? 30)]),
@@ -224,12 +244,127 @@ class ReportInputsService
                 ], $results);
             }
 
+            if ($timeline !== null) {
+                array_push($blocks, ...$this->segmentResultBlocks($product, $years, $startYear, $timeline));
+            }
+
             if ($product->comment_for_sales) {
                 $blocks[] = $this->text($this->k('products.comment.title'), (string) $product->comment_for_sales);
             }
         }
 
         return $blocks;
+    }
+
+    /** "EUR" for the euro (its code is stored as "euro"), the upper-case code for the rest. */
+    private function currencyName(string $code): string
+    {
+        return $code === 'euro' ? 'EUR' : strtoupper($code);
+    }
+
+    /** The exchange-rate forecast of the study, one row per foreign currency. Left out when the study does not export. */
+    private function fxBlocks(Project $project, int $startYear): array
+    {
+        $rows = [];
+        $years = range(0, max(0, (int) $project->duration - 1));
+        foreach ($project->fxRates()->orderBy('id')->get() as $fx) {
+            $rates = (array) $fx->rates;
+            $rows[] = array_merge([$this->k('products.segments.rateOf', ['currency' => $this->currencyName((string) $fx->currency)])], $this->byYear($rates, $years, fn ($v) => ['n' => (float) $v, 'd' => 2]));
+        }
+
+        return $rows === [] ? [] : [$this->table($this->k('products.segments.reportFx'), array_merge([''], $this->yearHeaders($years, $startYear)), $rows)];
+    }
+
+    /**
+     * What a product shares over its sales channels and export markets: the shares and price differences, the foreign prices and what they
+     * come to in the study currency, and the export seasonality when the product has one.
+     *
+     * @return list<array<string,mixed>>
+     */
+    private function segmentBlocks(Project $project, Product $product, array $years, int $startYear, callable $pctf): array
+    {
+        $segments = $product->segments()->with(['salesChannel', 'exportMarket'])->orderBy('id')->get();
+        if ($segments->isEmpty()) {
+            return [];
+        }
+
+        $heads = array_merge([''], $this->yearHeaders($years, $startYear));
+        $blocks = [];
+        $channels = [];
+        $markets = [];
+        $sellingYears = SegmentPricing::yearsOf($project, $product);
+        $fx = [];
+        foreach ($project->fxRates()->get() as $row) {
+            $fx[$row->currency] = SegmentCalculator::extend(array_map('floatval', (array) $row->rates));
+        }
+        $money = fn ($v) => ['n' => (float) $v, 'd' => 2];
+
+        foreach ($segments as $segment) {
+            if ($segment->kind === 'local') {
+                $name = ' · '.$segment->salesChannel?->name;
+                $channels[] = array_merge([$this->k('products.segments.shareOf', [], $name)], $this->byYear((array) $segment->allocation_percentages, $years, $pctf));
+                $channels[] = array_merge([$this->k('products.segments.differenceRow', [], $name)], $this->byYear((array) $segment->price_differences, $years, $pctf));
+
+                continue;
+            }
+
+            $currency = (string) $segment->exportMarket?->currency;
+            $name = ' · '.$segment->exportMarket?->name;
+            $foreign = SegmentCalculator::extend(SegmentCalculator::foreignPrices((float) $segment->first_foreign_price, (array) $segment->foreign_growth_rates, $sellingYears));
+            $converted = SegmentCalculator::exportPrices($foreign, $fx[$currency] ?? []);
+            $markets[] = array_merge([$this->k('products.segments.shareOf', [], $name)], $this->byYear((array) $segment->allocation_percentages, $years, $pctf));
+            $markets[] = array_merge([$this->k('products.segments.foreignPriceIn', ['currency' => $this->currencyName($currency)], $name)], $this->byYear($foreign, $years, $money));
+            $markets[] = array_merge([$this->k('products.segments.price', [], $name)], $this->byYear($converted, $years, $money));
+        }
+
+        if ($channels !== []) {
+            $blocks[] = $this->table($this->k('products.segments.reportChannels'), $heads, $channels);
+        }
+        if ($markets !== []) {
+            $blocks[] = $this->table($this->k('products.segments.reportMarkets'), $heads, $markets);
+        }
+
+        $export = $product->exportSeasonality;
+        if ($markets !== [] && $export !== null && ($export->type ?? 'flat') !== 'flat') {
+            $values = array_values(array_map('floatval', (array) $export->percentages));
+            $headers = [$this->k('products.season.'.$export->type)];
+            foreach ($values as $i => $_) {
+                $headers[] = $export->type === 'quarterly' ? $this->k('products.season.quarter', ['n' => $i + 1]) : (string) ($i + 1);
+            }
+            $blocks[] = $this->table($this->k('products.segments.reportSeasonExport'), $headers, [array_merge([''], array_map($pctf, $values))]);
+        }
+
+        return $blocks;
+    }
+
+    /** The saved calculation of every channel and market, added up per year: units, value and average price. */
+    private function segmentResultBlocks(Product $product, array $years, int $startYear, Timeline $timeline): array
+    {
+        $segments = $product->segments()->with(['salesChannel', 'exportMarket'])->orderBy('id')->get();
+        $rows = [];
+
+        foreach ($years as $year) {
+            foreach ($segments as $segment) {
+                $values = (array) $segment->monthly_values;
+                if ($values === []) {
+                    continue;
+                }
+                $quantities = (array) $segment->monthly_quantities;
+                $months = array_filter(array_keys($values), fn ($m) => $timeline->yearIndexOf((int) $m) === $year);
+                $quantity = array_sum(array_map(fn ($m) => (float) ($quantities[$m] ?? 0), $months));
+                $value = array_sum(array_map(fn ($m) => (float) ($values[$m] ?? 0), $months));
+                $rows[] = [
+                    (string) ($startYear + $year),
+                    (string) ($segment->kind === 'local' ? $segment->salesChannel?->name : $segment->exportMarket?->name),
+                    $this->k($segment->kind === 'local' ? 'products.segments.tabLocal' : 'products.segments.tabExport'),
+                    $quantity, $value, ['n' => $quantity > 0 ? $value / $quantity : 0.0, 'd' => 2],
+                ];
+            }
+        }
+
+        return $rows === [] ? [] : [$this->table($this->k('products.segments.reportResults'), [
+            $this->k('products.results.year'), '', '', $this->k('products.segments.quantity'), $this->k('products.results.salesValue'), $this->k('products.segments.price'),
+        ], $rows)];
     }
 
     /** @return list<list<mixed>> the saved calculation of a product, added up per year */
@@ -444,6 +579,9 @@ class ReportInputsService
         }
 
         $main = [];
+        $dateRows = [];
+        $customRows = [];
+        $milestoneRows = [];
         $funding = [];
         $instalments = [];
         $shares = [];
@@ -451,21 +589,42 @@ class ReportInputsService
 
         foreach ($rows as $a) {
             $terms = (string) ($a->payment_terms ?: 'cash');
-            $custom = [];
+            $type = (string) ($a->asset_type ?: 'construction');
+            $fromTotal = (array) $a->from_total_or_executions;
             foreach ((array) $a->custom_collection_policy as $days => $rate) {
-                $custom[] = ((float) $rate).'% / '.(int) $days.'d';
+                $customRows[] = [
+                    $a->name, $this->pct($rate), (int) $days === 0 ? $this->k('assets.sameMonth') : $this->k('assets.afterDays', ['n' => (int) $days]),
+                    $type === 'construction' ? $this->k(! empty($fromTotal[$days]) ? 'assets.fromTotal' : 'assets.fromExecution') : '',
+                ];
             }
             $summary = $this->assetSummary($a, $dates);
             $equity = (float) $a->equity_funding_rate;
+            $start = StudyCalendar::monthAt($dates, $a->start_date) ?? '';
 
             $main[] = [
-                $a->name, (int) $a->counts, (float) $a->amount, $summary['cost'],
-                (int) $a->depreciation_duration > 0 ? $this->k('assets.years', ['n' => (int) $a->depreciation_duration]) : $this->k('assets.noDepreciation'),
-                StudyCalendar::monthAt($dates, $a->start_date) ?? '', StudyCalendar::monthAt($dates, $a->end_date) ?? '',
+                $a->name, $this->k('assets.kinds.'.$type.'.title'), (int) $a->counts, (float) $a->amount, $summary['cost'],
+                $type === 'land' ? $this->k('assets.noDepreciation') : ((int) $a->depreciation_duration > 0 ? $this->k('assets.years', ['n' => (int) $a->depreciation_duration]) : $this->k('assets.noDepreciation')),
                 $this->pct($a->admin_depreciation_percentage), $this->pct($a->replacement_cost_rate),
                 (float) $a->replacement_cost_rate > 0 ? $this->k('assets.replacementYears', ['n' => (int) ($a->replacement_cost_interval ?: 1)]) : '',
-                $terms === 'customize' ? implode(' + ', $custom) : $this->k('assets.terms.'.$terms),
+                $this->k('assets.terms.'.$terms),
             ];
+
+            // land and other assets have one date; a construction a start and an end and how it is spent; a machine a purchase, a delivery and a ready date
+            $dateRows[] = [
+                $a->name, $this->k('assets.kinds.'.$type.'.title'), $start,
+                $type === 'machine' ? (StudyCalendar::monthAt($dates, $a->delivery_date ?? $a->start_date) ?? '') : '',
+                in_array($type, ['construction', 'machine'], true) ? (StudyCalendar::monthAt($dates, $a->end_date) ?? '') : '',
+                $type === 'construction' ? $this->k(($a->execution_curve ?: 'flat') === 's_curve' ? 'assets.curves.s_curve' : 'assets.curves.flat') : '',
+            ];
+
+            if ($terms === 'milestone') {
+                $ms = (array) $a->milestone_payments;
+                $line = [$a->name];
+                foreach (['purchase', 'delivery', 'ready'] as $key) {
+                    $line[] = ['text' => ((float) ($ms[$key]['rate'] ?? 0)).'% / '.(int) ($ms[$key]['days'] ?? 0).'d'];
+                }
+                $milestoneRows[] = $line;
+            }
 
             $funding[] = [
                 $a->name, $this->pct($equity), $this->pct(max(0, 100 - $equity)),
@@ -493,10 +652,26 @@ class ReportInputsService
         }
 
         $blocks = [$this->table($this->k('assets.title'), [
-            $this->k('assets.name'), $this->k('assets.counts'), $this->k('assets.amount'), $this->k('assets.total'), $this->k('assets.depreciation'),
-            $this->k('assets.from'), $this->k('assets.to'), $this->k('assets.adminPct'), $this->k('assets.replacementRate'), $this->k('assets.replacementInterval'),
+            $this->k('assets.name'), $this->k('assets.kind'), $this->k('assets.counts'), $this->k('assets.amount'), $this->k('assets.total'), $this->k('assets.depreciation'),
+            $this->k('assets.adminPct'), $this->k('assets.replacementRate'), $this->k('assets.replacementInterval'),
             $this->k('assets.paymentTerms'),
         ], $main)];
+
+        $blocks[] = $this->table($this->k('assets.report.dates'), [
+            $this->k('assets.name'), $this->k('assets.kind'), $this->k('assets.report.start'), $this->k('assets.deliveryDate'), $this->k('assets.report.end'), $this->k('assets.spending'),
+        ], $dateRows);
+
+        if ($customRows !== []) {
+            $blocks[] = $this->table($this->k('assets.report.customised'), [
+                $this->k('assets.name'), $this->k('assets.rate'), $this->k('assets.dueDays'), $this->k('assets.basis'),
+            ], $customRows);
+        }
+
+        if ($milestoneRows !== []) {
+            $blocks[] = $this->table($this->k('assets.report.milestones'), [
+                $this->k('assets.name'), $this->k('assets.milestones.purchase'), $this->k('assets.milestones.delivery'), $this->k('assets.milestones.ready'),
+            ], $milestoneRows);
+        }
 
         if ($instalments !== []) {
             $blocks[] = $this->table($this->k('assets.terms.installment'), [

@@ -203,13 +203,16 @@ class OpeningBalanceService
         $project->load(['products' => fn ($q) => $q->orderBy('id')]);
 
         $values = [];
-        $sellingStart = [];
+        $units = [];
+        $made = [];
         foreach ($project->products as $product) {
             $values[$product->id] = (array) $product->monthly_sales_target_values;
-            $sellingStart[$product->id] = (int) $product->selling_start_date;
+            $units[$product->id] = (array) $product->monthly_sales_target_quantities;
+            $made[$product->id] = (array) (($product->product_inventory_qt_statement ?? [])['manufacturing_quantity'] ?? []);
         }
-        $revenueShares = ProductAllocation::revenueShares($values);
         $productIds = $project->products->pluck('id')->all();
+        $active = ProductAllocation::activity($made, $units, $values, $productIds, array_keys($timeline->dates));
+        $unallocated = [];
         $rows = [];
 
         foreach (FixedAssetOpeningBalance::where('project_id', $project->id)->orderBy('id')->get() as $asset) {
@@ -223,7 +226,8 @@ class OpeningBalanceService
             ], $timeline, $months);
 
             $byRevenue = (bool) $asset->is_as_revenue_percentages;
-            $typed = ProductAllocation::typedShares(array_map('floatval', (array) $asset->product_allocations), $sellingStart, array_keys($timeline->dates));
+            $percent = array_map('floatval', (array) $asset->product_allocations);
+            $typed = ProductAllocation::activeTypedShares($percent, $active, array_keys($timeline->dates));
 
             $asset->update([
                 'admin_depreciations'               => $result['admin'],
@@ -233,8 +237,12 @@ class OpeningBalanceService
                 'monthly_product_allocations'       => $byRevenue ? [] : $typed,
             ]);
 
-            if ($result['manufacturing'] !== [] && $productIds !== []) {
-                foreach (ProductAllocation::split($revenueShares, $typed, $productIds, $result['manufacturing'], $byRevenue) as $productId => $payload) {
+            if ($result['manufacturing'] !== []) {
+                $split = ProductAllocation::allocate($active, $values, $percent, $productIds, $result['manufacturing'], $byRevenue);
+                foreach ($split['unallocated'] as $month => $left) {
+                    $unallocated[$month] = ($unallocated[$month] ?? 0.0) + $left;
+                }
+                foreach ($split['products'] as $productId => $payload) {
                     $rows[] = [
                         'project_id' => $project->id, 'product_id' => $productId, 'expense_name' => $asset->name,
                         'is_expense' => 0, 'is_depreciation' => 0, 'is_opening_depreciation' => 1, 'payload' => json_encode($payload),
@@ -247,6 +255,9 @@ class OpeningBalanceService
         if ($rows !== []) {
             DB::table('product_expense_allocations')->insert($rows);
         }
+
+        // depreciation no product took (none was making or selling) is shown in general expenses of that month
+        $project->update(['unallocated_opening_depreciation' => $unallocated]);
     }
 
     /**

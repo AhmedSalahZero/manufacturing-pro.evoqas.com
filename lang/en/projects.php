@@ -38,6 +38,15 @@ return [
         'rawMaterials.*.measurement_unit'           => 'raw material measurement unit',
         'rawMaterials.*.vat_rate'                   => 'raw material VAT rate',
         'rawMaterials.*.withhold_tax_rate'          => 'raw material withholding tax rate',
+        'sales_channels'                            => 'sales channels',
+        'sales_channels.*.name'                     => 'channel name',
+        'export_markets'                            => 'export markets',
+        'export_markets.*.name'                     => 'country name',
+        'export_markets.*.currency'                 => 'market currency',
+        'fx_rates'                                  => 'foreign currencies',
+        'fx_rates.*.currency'                       => 'foreign currency',
+        'fx_rates.*.rates.*'                        => 'exchange rate',
+        'has_export_sales'                          => 'export sales',
     ],
 
     'validation' => [
@@ -66,6 +75,29 @@ return [
         'rawMaterials.*.name.required'             => 'Please enter the raw material name.',
         'rawMaterials.*.measurement_unit.required' => 'Please select the raw material measurement unit.',
         'rawMaterials.*.rm_inventory_coverage_days.required' => 'Please select the inventory coverage days.',
+        'sales_channels.max'                       => 'You can have up to :max sales channels.',
+        'sales_channels.*.name.required'           => 'Please enter the channel name.',
+        'sales_channels.*.name.distinct'           => 'Two channels have the same name.',
+        'export_markets.max'                       => 'You can have up to :max export markets.',
+        'export_markets.*.name.required'           => 'Please enter the country name.',
+        'export_markets.*.name.distinct'           => 'Two markets have the same name.',
+        'export_markets.*.currency.required'       => 'Please choose the market currency.',
+        'export_markets.*.currency.in'             => 'Please choose a valid currency.',
+        'fx_rates.max'                             => 'You can choose up to :max foreign currencies.',
+        'fx_rates.*.currency.not_in'               => 'The study currency cannot be a foreign currency.',
+        'fx_rates.*.currency.distinct'             => 'This currency is chosen twice.',
+        'fx_rates.*.rates.*.required'              => 'Enter the exchange rate of this year.',
+        'fx_rates.*.rates.*.numeric'               => 'The exchange rate must be a number.',
+        'fx_rates.*.rates.*.gt'                    => 'The exchange rate must be greater than zero.',
+    ],
+
+    // Messages of the sales channels and export card (study form).
+    'sales' => [
+        'needCurrency'   => 'Choose at least one foreign currency for the export sales.',
+        'marketCurrency' => 'The currency of this market is not one of the study\'s foreign currencies.',
+        'exportInUse'    => 'These products still have export quantity: :products. Confirm switching export off to set their export to 0.',
+        'channelInUse'   => 'The channel ":name" cannot be deleted: it is used by :products.',
+        'marketInUse'    => 'The market ":name" cannot be deleted: it is used by :products.',
     ],
 
     'share' => [

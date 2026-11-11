@@ -118,8 +118,9 @@ final class StatementsSheet
         $g->line('cogs', $x->t('is.cogs'), fn (K $k) => $k->r('cgRm').'+'.$k->r('cgDl').'+'.$k->r('cgOh'), ['total' => 'sum', 'bold' => true]);
         $g->line('gp', $x->t('is.gp'), fn (K $k) => $k->r('rev').'-'.$k->r('cogs'), ['total' => 'sum', 'bold' => true]);
         $g->blank();
-        $adm = fn (K $k) => self::sum($x, $k, self::perAsset($x, 'dadm')).'+'.self::obRow($x, $k, 't_adm');
-        $g->line('xGen', $x->t('is.xGen'), fn (K $k) => $SF($k).'*('.self::sum($x, $k, ['exp.cat_general-expenses', 'mp.cgen']).'+'.$adm($k).')', ['total' => 'sum']);
+        // office depreciation, plus the machine depreciation no product took (none is making or selling that month)
+        $adm = fn (K $k) => self::sum($x, $k, self::perAsset($x, 'dadm')).'+'.self::sum($x, $k, self::perAsset($x, 'dun')).'+'.self::obRow($x, $k, 't_adm').'+'.self::obRow($x, $k, 't_un');
+        $g->line('xGen', $x->t('is.xGen'), fn (K $k) => $SF($k).'*('.self::sum($x, $k, ['exp.cat_general-expenses', 'mp.cgen', 'mp.udl', 'mp.uoh', 'exp.uT']).'+'.$adm($k).')', ['total' => 'sum']);
         $g->line('xSales', $x->t('is.xSales'), fn (K $k) => $SF($k).'*('.self::sum($x, $k, ['exp.cat_sales', 'mp.csales']).')', ['total' => 'sum']);
         $g->line('xMkt', $x->t('is.xMkt'), fn (K $k) => $SF($k).'*('.self::sum($x, $k, ['exp.cat_marketing', 'mp.cmkt']).')', ['total' => 'sum']);
         if ($m->new) {

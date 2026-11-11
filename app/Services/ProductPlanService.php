@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Calculations\ProductSalesCalculator;
 use App\Calculations\SeasonalityCalculator;
+use App\Calculations\SegmentCalculator;
 use App\Models\Product;
+use App\Models\ProductSegment;
 use App\Models\Project;
 use App\Models\Seasonality;
 use Illuminate\Support\Facades\DB;
@@ -37,15 +39,7 @@ class ProductPlanService
      */
     public function viewYears(Project $project, Product $product): array
     {
-        $startYear = (int) $project->start_date->format('Y');
-        $endYear = (int) $project->end_date->format('Y');
-        $sellingMonth = ($project->extended_study_dates ?? [])[$product->selling_start_date] ?? null;
-        $sellingYear = $sellingMonth ? (int) substr($sellingMonth, 0, 4) : $startYear;
-
-        $first = max(0, $sellingYear - $startYear);
-        $last = max($first, $endYear - $startYear);
-
-        return range($first, $last);
+        return SegmentPricing::yearsOf($project, $product);
     }
 
     /**
@@ -102,7 +96,14 @@ class ProductPlanService
 
             $product->update($values);
 
-            $this->saveSeasonality($project, $product, $data['seasonality']);
+            $this->saveSeasonality($project, $product, $data['seasonality'], Seasonality::LOCAL);
+            if (isset($data['export_seasonality'])) {
+                $this->saveSeasonality($project, $product, $data['export_seasonality'], Seasonality::EXPORT);
+            }
+            if (array_key_exists('segments', $data)) {
+                $this->saveSegments($project, $product, (array) $data['segments'], $years);
+            }
+            $this->refreshSegmentSales($project, $product, $years);
             $this->saveRecipe($project, $product, $data['rawMaterials'] ?? [], $years);
         });
 
@@ -193,7 +194,7 @@ class ProductPlanService
         return $result;
     }
 
-    private function saveSeasonality(Project $project, Product $product, array $input): void
+    private function saveSeasonality(Project $project, Product $product, array $input, string $scope): void
     {
         $type = $input['type'];
         $percentages = array_map(fn ($v) => $v === null ? 0 : (float) $v, array_values($input[$type] ?? []));
@@ -205,7 +206,91 @@ class ProductPlanService
             'project_id'              => $project->id,
         ];
 
-        Seasonality::updateOrCreate(['model_name' => 'Product', 'model_id' => $product->id], $row);
+        Seasonality::updateOrCreate(['model_name' => 'Product', 'model_id' => $product->id, 'scope' => $scope], $row);
+    }
+
+    /**
+     * Saves how the product uses the study's sales channels (local) and export markets (export): the share of each year, the price
+     * difference of a channel, the first foreign price and growth of a market, and the terms of a segment that has its own.
+     * A channel or market that is not in the list any more is removed from the product.
+     *
+     * @param  array{local?:list<array<string,mixed>>,export?:list<array<string,mixed>>}  $segments
+     * @param  list<int>  $years
+     */
+    private function saveSegments(Project $project, Product $product, array $segments, array $years): void
+    {
+        $kept = [];
+
+        foreach (['local' => 'sales_channel_id', 'export' => 'export_market_id'] as $kind => $column) {
+            foreach (array_values((array) ($segments[$kind] ?? [])) as $row) {
+                $own = (bool) ($row['uses_own_terms'] ?? false);
+                $values = [
+                    'project_id'             => $project->id,
+                    'allocation_percentages' => $this->perYear((array) ($row['allocation_percentages'] ?? []), $years),
+                    'uses_own_terms'         => $own,
+                    'collection_policy_value' => $own ? $this->normaliseTerms((array) ($row['collection_policy_value'] ?? []), $project) : null,
+                ];
+
+                if ($kind === 'local') {
+                    $values['price_differences'] = $this->perYear((array) ($row['price_differences'] ?? []), $years);
+                } else {
+                    $values['first_foreign_price'] = (float) ($row['first_foreign_price'] ?? 0);
+                    $values['foreign_growth_rates'] = $this->perYear((array) ($row['foreign_growth_rates'] ?? []), $years);
+                }
+
+                $kept[] = ProductSegment::updateOrCreate(
+                    ['product_id' => $product->id, 'kind' => $kind, $column => (int) $row[$column]],
+                    $values,
+                )->id;
+            }
+        }
+
+        ProductSegment::where('product_id', $product->id)->whereNotIn('id', $kept)->delete();
+    }
+
+    /** One set of terms per period (first operation year, following years), equal due days merged. @return list<array<string,mixed>> */
+    private function normaliseTerms(array $terms, Project $project): array
+    {
+        $periods = $project->duration > 1 ? 2 : 1;
+        $result = [];
+
+        for ($i = 0; $i < $periods; $i++) {
+            $result[$i] = self::mergeDueDays($terms[$i] ?? []);
+        }
+
+        return $result;
+    }
+
+    /**
+     * With channels or markets saved, the yearly sales value is the sum of quantity x price over all of them, and the export price
+     * kept on the product is the average export price in the study currency (so the screens and reports that read the product
+     * show what is really sold). A product with none keeps the figures worked out from its own prices.
+     *
+     * @param  list<int>  $years
+     */
+    private function refreshSegmentSales(Project $project, Product $product, array $years): void
+    {
+        $pricing = app(SegmentPricing::class);
+        $resolved = $pricing->resolve($project, $product->refresh());
+
+        if (! $pricing->hasSegments($resolved)) {
+            return;
+        }
+
+        $all = array_merge(array_values($resolved['local']), array_values($resolved['export']));
+        $values = [];
+        $exportPrices = [];
+        foreach ($years as $year) {
+            $values[$year] = SegmentCalculator::totalValue($all, $year);
+            $exportPrices[$year] = SegmentCalculator::averagePrice($resolved['export'], $year);
+        }
+
+        $changes = ['sales_target_values' => $this->extend($values)];
+        if (collect($resolved['export'])->contains(fn ($row) => $row['segment'] !== null)) {
+            $changes['export_price_per_unit'] = $this->extend($exportPrices);
+        }
+
+        $product->update($changes);
     }
 
     /** @param list<array<string,mixed>> $lines @param list<int> $years */

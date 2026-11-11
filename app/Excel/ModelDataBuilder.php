@@ -9,11 +9,15 @@ use App\Models\FixedAsset;
 use App\Models\FixedAssetOpeningBalance;
 use App\Models\LoanSchedulePayment;
 use App\Models\LongTermLoanOpeningBalance;
+use App\Models\ExportMarket;
+use App\Models\FxRate;
 use App\Models\Manpower;
 use App\Models\OtherCreditsOpeningBalance;
 use App\Models\OtherDebtorsOpeningBalance;
 use App\Models\OtherLongTermLiabilitiesOpeningBalance;
 use App\Models\Product;
+use App\Models\ProductSegment;
+use App\Models\SalesChannel;
 use App\Models\Project;
 use App\Models\RawMaterial;
 use App\Models\SupplierPayableOpeningBalance;
@@ -36,10 +40,14 @@ final class ModelDataBuilder
         $id = $project->id;
         $all = fn (string $model) => $model::where('project_id', $id)->orderBy('id')->get()->toArray();
 
+        $channels = SalesChannel::where('project_id', $id)->pluck('name', 'id')->all();
+        $markets = ExportMarket::where('project_id', $id)->get(['id', 'name', 'currency'])->keyBy('id');
         $products = [];
         foreach (Product::where('project_id', $id)->orderBy('id')->get() as $product) {
             $row = $product->toArray();
             $row['seasonality'] = $product->seasonality()->first()?->toArray();
+            $row['export_seasonality'] = $product->exportSeasonality()->first()?->toArray();
+            $row['segments'] = self::segments($product, $channels, $markets);
             $row['recipe'] = $product->rawMaterials()->get()->map(fn ($m) => ['raw_material_id' => $m->id, 'percentages' => $m->pivot->percentages])->all();
             $products[] = $row;
         }
@@ -48,6 +56,7 @@ final class ModelDataBuilder
             'project'        => self::projectRow($project),
             'source_note'    => self::sourceNote($project),
             'products'       => $products,
+            'fx_rates'       => $project->has_export_sales ? FxRate::where('project_id', $id)->orderBy('id')->get(['currency', 'rates'])->map(fn ($r) => ['currency' => $r->currency, 'rates' => (array) $r->rates])->all() : [],
             'raw_materials'  => $all(RawMaterial::class),
             'manpowers'      => $all(Manpower::class),
             'expenses'       => $all(Expense::class),
@@ -65,6 +74,34 @@ final class ModelDataBuilder
                 'equity'          => $all(EquityOpeningBalance::class),
             ],
         ];
+    }
+
+    /**
+     * What a product shares over the channels and markets, in the order of the screen (channels first), with the names the sheets show.
+     *
+     * @param  array<int,string>  $channels  id => name
+     * @return list<array<string,mixed>>
+     */
+    private static function segments(Product $product, array $channels, $markets): array
+    {
+        $rows = [];
+
+        foreach (ProductSegment::where('product_id', $product->id)->orderBy('kind')->orderBy('id')->get() as $segment) {
+            $market = $segment->export_market_id ? $markets->get($segment->export_market_id) : null;
+            $rows[] = [
+                'kind'                    => $segment->kind,
+                'name'                    => $segment->kind === 'local' ? (string) ($channels[$segment->sales_channel_id] ?? '') : (string) ($market?->name ?? ''),
+                'currency'                => $market?->currency,
+                'allocation_percentages'  => (array) $segment->allocation_percentages,
+                'price_differences'       => (array) $segment->price_differences,
+                'first_foreign_price'     => (float) $segment->first_foreign_price,
+                'foreign_growth_rates'    => (array) $segment->foreign_growth_rates,
+                'uses_own_terms'          => (bool) $segment->uses_own_terms,
+                'collection_policy_value' => (array) $segment->collection_policy_value,
+            ];
+        }
+
+        return $rows;
     }
 
     /**

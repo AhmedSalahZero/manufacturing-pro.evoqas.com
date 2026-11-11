@@ -18,6 +18,9 @@ use Illuminate\Support\Facades\DB;
 //                 (SalesCalculationService, which ends with recalculate() below).
 //                 Rows sent with an id are updated, rows without an id are created, rows no longer sent are deleted.
 //                 Months are typed as "YYYY-MM" and saved as a position in the study (0 = the study's first month).
+//                 Kinds of asset: land and other are bought in one month (land is never depreciated); a construction is spent from its
+//                 start to its end month, flat or on an S-curve; a machine is bought, delivered and ready (end_date) and can be paid by
+//                 milestones (a % at the purchase, at the delivery and when it is ready).
 //  recalculate()  runs the engine (app/Calculations/FixedAssetCalculator + LoanCalculator) for every asset and saves
 //                 next to the inputs: the monthly statements (execution, payments, equity, loan drawdown, capitalisation,
 //                 depreciation, payable), the loan schedule (loan_schedule_payments) and the depreciation that belongs
@@ -26,7 +29,16 @@ use Illuminate\Support\Facades\DB;
 
 class FixedAssetService
 {
-    public const PAYMENT_TERMS = ['cash', 'customize', 'installment'];
+    public const PAYMENT_TERMS = ['cash', 'customize', 'installment', 'milestone'];
+
+    /** Land, construction, machine (delivered and installed) and other fixed assets. */
+    public const TYPES = FixedAssetCalculator::TYPES;
+
+    /** A construction is spent in equal parts or on an S-curve. */
+    public const CURVES = FixedAssetCalculator::CURVES;
+
+    /** A machine can be paid at the purchase, at the delivery and when it is ready. */
+    public const MILESTONES = FixedAssetCalculator::MILESTONES;
 
     /** Instalment intervals of the bank loan. */
     public const LOAN_INTERVALS = ['monthly', 'quarterly', 'semi-annually'];
@@ -55,21 +67,33 @@ class FixedAssetService
             $kept = [];
 
             foreach ($data['rows'] ?? [] as $row) {
+                $type = in_array($row['asset_type'] ?? '', self::TYPES, true) ? $row['asset_type'] : 'construction';
                 $terms = $row['payment_terms'] ?? 'cash';
                 $byRevenue = (bool) ($row['is_as_revenue_percentages'] ?? true);
                 $admin = (float) ($row['admin_depreciation_percentage'] ?? 0);
-                [$policy, $fromTotal] = $terms === 'customize' ? $this->customPolicy($row['custom'] ?? []) : [[], []];
+                // "Taken from" (the total price or each month's work) only means something for a construction, which is spent over several months.
+                [$policy, $fromTotal] = $terms === 'customize' ? $this->customPolicy($row['custom'] ?? [], $type === 'construction') : [[], []];
+
+                // Land and other assets are bought in one month. A machine is bought, delivered and then ready (its end month).
+                $start = StudyCalendar::indexOf($dates, $row['start']) ?? 0;
+                $oneMonth = in_array($type, ['land', 'other'], true);
+                $end = $oneMonth || empty($row['end']) ? $start : (StudyCalendar::indexOf($dates, $row['end']) ?? $start);
+                $delivery = $type === 'machine' ? (! empty($row['delivery']) ? (StudyCalendar::indexOf($dates, $row['delivery']) ?? $start) : $start) : null;
 
                 $values = [
                     'name'                           => $row['name'],
+                    'asset_type'                     => $type,
                     'counts'                         => (int) $row['counts'],
                     'amount'                         => $row['amount'],
-                    'depreciation_duration'          => (int) ($row['depreciation_duration'] ?? 0),
-                    'start_date'                     => StudyCalendar::indexOf($dates, $row['start']) ?? 0,
-                    'end_date'                       => StudyCalendar::indexOf($dates, $row['end']) ?? 0,
+                    'depreciation_duration'          => $type === 'land' ? 0 : (int) ($row['depreciation_duration'] ?? 0),
+                    'start_date'                     => $start,
+                    'end_date'                       => $end,
+                    'delivery_date'                  => $delivery,
+                    'execution_curve'                => $type === 'construction' && ($row['execution_curve'] ?? 'flat') === 's_curve' ? 's_curve' : 'flat',
+                    'milestone_payments'             => $type === 'machine' && $terms === 'milestone' ? $this->milestones($row['milestones'] ?? []) : null,
                     'admin_depreciation_percentage'  => $admin,
                     'manufacturing_depreciation_percentage' => 100 - $admin,
-                    'replacement_cost_rate'          => $row['replacement_cost_rate'] ?? 0,
+                    'replacement_cost_rate'          => $type === 'land' ? 0 : ($row['replacement_cost_rate'] ?? 0),
                     'replacement_cost_interval'      => (int) ($row['replacement_cost_interval'] ?? 1),
                     'payment_terms'                  => $terms,
                     'custom_collection_policy'       => $policy,
@@ -106,11 +130,31 @@ class FixedAssetService
     }
 
     /**
+     * The milestones of a machine: for the purchase, the delivery and the moment it is ready, the % of the price and the days after.
+     *
+     * @return array<string,array{rate:float,days:int}>
+     */
+    public function milestones(array $typed): array
+    {
+        $result = [];
+
+        foreach (self::MILESTONES as $key) {
+            $result[$key] = [
+                'rate' => (float) ($typed[$key]['rate'] ?? 0),
+                'days' => (int) ($typed[$key]['days'] ?? 0),
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
      * "due days => %" and "due days => is it a % of the total cost" from the lines of the payment pop-up.
+     * $withBasis is false for everything but a construction: there the choice does not exist and every line is "from execution".
      *
      * @return array{0:array<int,float>,1:array<int,int>}
      */
-    public function customPolicy(array $lines): array
+    public function customPolicy(array $lines, bool $withBasis = true): array
     {
         $policy = [];
         $fromTotal = [];
@@ -121,7 +165,7 @@ class FixedAssetService
             }
             $days = (int) $line['due_days'];
             $policy[$days] = (float) $line['rate'];
-            $fromTotal[$days] = ! empty($line['from_total']) ? 1 : 0;
+            $fromTotal[$days] = $withBasis && ! empty($line['from_total']) ? 1 : 0;
         }
 
         ksort($policy);
@@ -137,15 +181,18 @@ class FixedAssetService
             $project->load(['products' => fn ($q) => $q->orderBy('id'), 'fixedAssets' => fn ($q) => $q->orderBy('id')]);
 
             $values = [];
-            $sellingStart = [];
+            $units = [];
+            $made = [];
             foreach ($project->products as $product) {
                 $values[$product->id] = (array) $product->monthly_sales_target_values;
-                $sellingStart[$product->id] = (int) $product->selling_start_date;
+                $units[$product->id] = (array) $product->monthly_sales_target_quantities;
+                $made[$product->id] = (array) (($product->product_inventory_qt_statement ?? [])['manufacturing_quantity'] ?? []);
             }
 
-            $revenueShares = ProductAllocation::revenueShares($values);
             $months = array_keys($timeline->dates);
             $productIds = $project->products->pluck('id')->all();
+            $active = ProductAllocation::activity($made, $units, $values, $productIds, $months);
+            $unallocated = [];
             $operation = array_key_first($timeline->operationMonths) ?? 0;
             $studyEnd = ($project->end_date ? StudyCalendar::indexOf($timeline->dates, $project->end_date->format('Y-m-d')) : null) ?? max($months);
 
@@ -158,7 +205,8 @@ class FixedAssetService
                 $result = FixedAssetCalculator::calculate($this->inputs($asset), $timeline, $operation, $studyEnd);
 
                 $byRevenue = (bool) $asset->is_as_revenue_percentages;
-                $typed = ProductAllocation::typedShares(array_map('floatval', (array) $asset->product_allocations), $sellingStart, $months);
+                $percent = array_map('floatval', (array) $asset->product_allocations);
+                $typed = ProductAllocation::activeTypedShares($percent, $active, $months);
 
                 $asset->update([
                     'capitalization_statement'                    => $result['under_progress'],
@@ -194,8 +242,11 @@ class FixedAssetService
                 }
 
                 if ($result['manufacturing_depreciation'] !== [] && $asset->name !== '') {
-                    $perProduct = ProductAllocation::split($revenueShares, $typed, $productIds, $result['manufacturing_depreciation'], $byRevenue);
-                    foreach ($perProduct as $productId => $payload) {
+                    $split = ProductAllocation::allocate($active, $values, $percent, $productIds, $result['manufacturing_depreciation'], $byRevenue);
+                    foreach ($split['unallocated'] as $month => $left) {
+                        $unallocated[$month] = ($unallocated[$month] ?? 0.0) + $left;
+                    }
+                    foreach ($split['products'] as $productId => $payload) {
                         $allocations[] = [
                             'project_id' => $project->id, 'product_id' => $productId, 'expense_name' => $asset->name,
                             'is_expense' => 0, 'is_depreciation' => 1, 'payload' => json_encode($payload),
@@ -208,6 +259,9 @@ class FixedAssetService
             if ($allocations !== []) {
                 DB::table('product_expense_allocations')->insert($allocations);
             }
+
+            // machine depreciation no product took (none was making or selling) is shown in general expenses of that month
+            $project->update(['unallocated_depreciation' => $unallocated]);
         });
     }
 
@@ -224,6 +278,10 @@ class FixedAssetService
         }
 
         return [
+            'type'                 => $asset->asset_type ?: 'construction',
+            'curve'                => $asset->execution_curve ?: 'flat',
+            'delivery'             => $asset->delivery_date === null ? null : (int) $asset->delivery_date,
+            'milestones'           => (array) $asset->milestone_payments,
             'count'                => (float) $asset->counts,
             'amount'               => (float) $asset->amount,
             'start'                => (int) $asset->start_date,

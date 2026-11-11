@@ -12,12 +12,14 @@ import { Link, useForm } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import CollectionTerms from '@/Components/CollectionTerms.vue';
 import CopyInput from '@/Components/CopyInput.vue';
+import ProductSegments from '@/Components/ProductSegments.vue';
 import TermsPair from '@/Components/TermsPair.vue';
 import { useI18n } from '@/lang/i18n';
 import { formatNumber } from '@/Utils/format';
 import {
     addsUpTo100, exportPercent, exportQuantity, localQuantity, num, partValue, repriceFrom, targetQuantity, total, yearSales,
 } from '@/Utils/productPlan';
+import { exportLines, localLines } from '@/Utils/segments';
 
 const props = defineProps({
     project: { type: Object, required: true },
@@ -25,6 +27,10 @@ const props = defineProps({
     years: { type: Array, required: true },
     sales: { type: Object, required: true },
     seasonality: { type: Object, required: true },
+    // Product sales rebuild: the study's channels and markets, this product's rows for them, and the export pattern (all null for a study with none)
+    salesSettings: { type: Object, default: null },
+    segments: { type: Object, default: null },
+    exportSeasonality: { type: Object, default: null },
     inventory: { type: Object, required: true },
     policy: { type: Object, required: true },
     recipe: { type: Array, required: true },
@@ -48,6 +54,8 @@ const form = useForm({
     export_growth_rates: { ...props.sales.export_growth_rates },
     export_price_per_unit: { ...props.sales.export_price_per_unit },
     seasonality: { type: props.seasonality.type, quarterly: [...props.seasonality.quarterly], monthly: [...props.seasonality.monthly] },
+    ...(props.exportSeasonality ? { export_seasonality: { type: props.exportSeasonality.type, quarterly: [...props.exportSeasonality.quarterly], monthly: [...props.exportSeasonality.monthly] } } : {}),
+    ...(props.segments ? { segments: JSON.parse(JSON.stringify(props.segments)) } : {}),
     fg_inventory_quantity: props.inventory.quantity,
     fg_inventory_value: props.inventory.value,
     fg_inventory_coverage_days: props.inventory.coverage,
@@ -66,7 +74,17 @@ const invalid = (path) => Boolean(form.errors[path]);
 const target = (y) => targetQuantity(form.max_capacity[y], form.target_percentages[y]);
 const local = (y) => localQuantity(form.max_capacity[y], form.target_percentages[y], form.local_target_quantity_percentages[y]);
 const exported = (y) => exportQuantity(form.max_capacity[y], form.target_percentages[y], form.local_target_quantity_percentages[y]);
-const value = (y) => yearSales(form.max_capacity[y], form.target_percentages[y], form.local_target_quantity_percentages[y], form.local_price_per_unit[y], form.export_price_per_unit[y]);
+const segmentsOn = computed(() => Boolean(props.salesSettings?.enabled && props.segments));
+const hasExport = computed(() => Boolean(props.salesSettings?.hasExport));
+// With channels and markets the value of a year is the sum of their values (the server works it out the same way).
+function segmentValue(y) {
+    const inLocal = localLines(form.segments.local, y, local(y), form.local_price_per_unit[y]);
+    const inExport = hasExport.value ? exportLines(form.segments.export, y, yearIndexes.value, exported(y), props.salesSettings.fx, (m) => m.currency) : [];
+
+    return [...inLocal, ...inExport].reduce((s, l) => s + l.value, 0);
+}
+const quantitiesBy = (fn) => Object.fromEntries(yearIndexes.value.map((y) => [y, fn(y)]));
+const value = (y) => (segmentsOn.value ? segmentValue(y) : yearSales(form.max_capacity[y], form.target_percentages[y], form.local_target_quantity_percentages[y], form.local_price_per_unit[y], form.export_price_per_unit[y]));
 const show = (n) => formatNumber(n, 1);
 
 // A price follows the year before it (grown by the year's growth %); typing a price or a growth % updates the years after it.
@@ -100,8 +118,15 @@ function copyGrowth(kind, position) {
 }
 
 // ── Monthly pattern ──────────────────────────────────────────────
-const patternTotal = computed(() => (form.seasonality.type === 'flat' ? 100 : total(form.seasonality[form.seasonality.type])));
-const patternOk = computed(() => form.seasonality.type === 'flat' || addsUpTo100(form.seasonality[form.seasonality.type]));
+const patternTotal = (key) => (form[key].type === 'flat' ? 100 : total(form[key][form[key].type]));
+const patternOk = (key) => form[key].type === 'flat' || addsUpTo100(form[key][form[key].type]);
+// One pattern for local sales and, when the study has export sales, one for export sales.
+const patterns = computed(() => (hasExport.value && form.export_seasonality
+    ? [
+        { key: 'seasonality', title: t('products.season.titleLocal'), hint: t('products.season.hintLocal'), suffix: '' },
+        { key: 'export_seasonality', title: t('products.season.titleExport'), hint: t('products.season.hintExport'), suffix: t('products.segments.tabExport') },
+    ]
+    : [{ key: 'seasonality', title: t('products.season.title'), hint: t('products.season.hint'), suffix: '' }]));
 const monthName = (n) => t(`projects.months.${n}`);
 
 // ── Opening inventory ────────────────────────────────────────────
@@ -233,14 +258,14 @@ const periodTitle = (stream, i) => `${t(`products.collection.${stream}`)} — ${
                                     <td><b>{{ t('products.sales.exportQuantity') }}</b></td>
                                     <td v-for="y in years" :key="y.index" class="num" dir="ltr">{{ show(exported(y.index)) }}</td>
                                 </tr>
-                                <tr>
+                                <tr v-if="!segmentsOn">
                                     <td>{{ t('products.sales.exportGrowth') }}</td>
                                     <td v-for="(y, pos) in years" :key="y.index">
                                         <CopyInput v-if="pos > 0" v-model="form.export_growth_rates[y.index]" :aria-label="`${t('products.sales.exportGrowth')} ${y.year}`" :invalid="invalid(`export_growth_rates.${y.index}`)" :copy="pos < years.length - 1" @change="growthChanged('export', pos)" @copy="copyGrowth('export', pos)" />
                                         <span v-else class="mute">—</span>
                                     </td>
                                 </tr>
-                                <tr>
+                                <tr v-if="!segmentsOn">
                                     <td>{{ t('products.sales.exportPrice') }}</td>
                                     <td v-for="(y, pos) in years" :key="y.index">
                                         <CopyInput v-model="form.export_price_per_unit[y.index]" :aria-label="`${t('products.sales.exportPrice')} ${y.year}`" :invalid="invalid(`export_price_per_unit.${y.index}`)" :copy="pos < years.length - 1" @change="priceChanged('export', pos)" @copy="copyPrice('export', pos)" />
@@ -255,38 +280,46 @@ const periodTitle = (stream, i) => `${t(`products.collection.${stream}`)} — ${
                         </table>
                     </div>
                     <p class="mute small">{{ t('products.sales.derivedNote') }}</p>
+                    <p v-if="segmentsOn && !hasExport" class="note" role="status">{{ t('products.segments.exportOffNote') }}</p>
                 </section>
 
-                <!-- Monthly pattern -->
-                <section class="card">
-                    <h3>{{ t('products.season.title') }}</h3>
-                    <p class="mute small">{{ t('products.season.hint') }}</p>
-                    <div class="seg" role="radiogroup" :aria-label="t('products.season.title')">
-                        <button v-for="type in ['flat', 'quarterly', 'monthly']" :key="type" type="button" class="btn" :class="{ 'btn-line': form.seasonality.type !== type }" role="radio" :aria-checked="form.seasonality.type === type" @click="form.seasonality.type = type">
+                <!-- Sales channels and export markets -->
+                <ProductSegments
+                    v-if="segmentsOn" :years="years" :segments="form.segments" :settings="salesSettings"
+                    :local-quantity="quantitiesBy(local)" :export-quantity="quantitiesBy(exported)" :base-price="form.local_price_per_unit"
+                    :errors="form.errors" :due-days="options.dueDays" :periods="project.periods" :read-only="readOnly"
+                />
+
+                <!-- Monthly pattern (local, and export when the study has export sales) -->
+                <section v-for="pat in patterns" :key="pat.key" class="card">
+                    <h3>{{ pat.title }}</h3>
+                    <p class="mute small">{{ pat.hint }}</p>
+                    <div class="seg" role="radiogroup" :aria-label="pat.title">
+                        <button v-for="type in ['flat', 'quarterly', 'monthly']" :key="type" type="button" class="btn" :class="{ 'btn-line': form[pat.key].type !== type }" role="radio" :aria-checked="form[pat.key].type === type" @click="form[pat.key].type = type">
                             {{ t(`products.season.${type}`) }}
                         </button>
                     </div>
 
-                    <p v-if="form.seasonality.type === 'flat'" class="mute small mt2">{{ t('products.season.flatNote') }}</p>
+                    <p v-if="form[pat.key].type === 'flat'" class="mute small mt2">{{ t('products.season.flatNote') }}</p>
 
-                    <div v-else-if="form.seasonality.type === 'quarterly'" class="grid3 fgrid mt2">
+                    <div v-else-if="form[pat.key].type === 'quarterly'" class="grid3 fgrid mt2">
                         <div v-for="q in 4" :key="q" class="fld">
                             <label>{{ t('products.season.quarter', { n: q }) }} (%)</label>
-                            <CopyInput v-model="form.seasonality.quarterly[q - 1]" :max="100" :aria-label="t('products.season.quarter', { n: q })" :invalid="invalid(`seasonality.quarterly.${q - 1}`)" :copy="q < 4" @copy="copyArray(form.seasonality.quarterly, q - 1)" />
+                            <CopyInput v-model="form[pat.key].quarterly[q - 1]" :max="100" :aria-label="`${t('products.season.quarter', { n: q })} ${pat.suffix}`.trim()" :invalid="invalid(`${pat.key}.quarterly.${q - 1}`)" :copy="q < 4" @copy="copyArray(form[pat.key].quarterly, q - 1)" />
                         </div>
                     </div>
 
                     <div v-else class="grid3 fgrid mt2">
                         <div v-for="m in 12" :key="m" class="fld">
                             <label>{{ monthName(m) }} (%)</label>
-                            <CopyInput v-model="form.seasonality.monthly[m - 1]" :max="100" :aria-label="monthName(m)" :invalid="invalid(`seasonality.monthly.${m - 1}`)" :copy="m < 12" @copy="copyArray(form.seasonality.monthly, m - 1)" />
+                            <CopyInput v-model="form[pat.key].monthly[m - 1]" :max="100" :aria-label="`${monthName(m)} ${pat.suffix}`.trim()" :invalid="invalid(`${pat.key}.monthly.${m - 1}`)" :copy="m < 12" @copy="copyArray(form[pat.key].monthly, m - 1)" />
                         </div>
                     </div>
 
-                    <p v-if="form.seasonality.type !== 'flat'" class="mt2">
-                        <span class="badge" :class="patternOk ? 'b-green' : 'b-red'" role="status">{{ t('terms.total', { total: Math.round(patternTotal * 100) / 100 }) }}</span>
+                    <p v-if="form[pat.key].type !== 'flat'" class="mt2">
+                        <span class="badge" :class="patternOk(pat.key) ? 'b-green' : 'b-red'" role="status">{{ t('terms.total', { total: Math.round(patternTotal(pat.key) * 100) / 100 }) }}</span>
                     </p>
-                    <span v-if="err(`seasonality.${form.seasonality.type}`)" class="dng small" role="alert">{{ err(`seasonality.${form.seasonality.type}`) }}</span>
+                    <span v-if="err(`${pat.key}.${form[pat.key].type}`)" class="dng small" role="alert">{{ err(`${pat.key}.${form[pat.key].type}`) }}</span>
                 </section>
 
                 <!-- Finished goods inventory -->
@@ -451,10 +484,22 @@ const periodTitle = (stream, i) => `${t(`products.collection.${stream}`)} — ${
                                         <td class="num" dir="ltr">{{ formatNumber(r.local_quantity ?? 0, 1) }}</td>
                                         <td /><td />
                                     </tr>
+                                    <tr v-for="line in r.local_segments ?? []" :key="'l' + line.name" class="subrow deeper">
+                                        <td>{{ line.name }}</td>
+                                        <td class="num" dir="ltr">{{ formatNumber(line.value, 0) }}</td>
+                                        <td class="num" dir="ltr">{{ formatNumber(line.quantity, 1) }}</td>
+                                        <td /><td />
+                                    </tr>
                                     <tr class="subrow">
                                         <td>{{ t('products.results.exportSales') }}</td>
                                         <td class="num" dir="ltr">{{ formatNumber(r.export_value ?? 0, 0) }}</td>
                                         <td class="num" dir="ltr">{{ formatNumber(r.export_quantity ?? 0, 1) }}</td>
+                                        <td /><td />
+                                    </tr>
+                                    <tr v-for="line in r.export_segments ?? []" :key="'x' + line.name" class="subrow deeper">
+                                        <td>{{ line.name }}</td>
+                                        <td class="num" dir="ltr">{{ formatNumber(line.value, 0) }}</td>
+                                        <td class="num" dir="ltr">{{ formatNumber(line.quantity, 1) }}</td>
                                         <td /><td />
                                     </tr>
                                 </template>
@@ -489,5 +534,8 @@ const periodTitle = (stream, i) => `${t(`products.collection.${stream}`)} — ${
 }
 .subrow td:first-child {
     padding-inline-start: 28px;
+}
+.deeper td:first-child {
+    padding-inline-start: 52px;
 }
 </style>

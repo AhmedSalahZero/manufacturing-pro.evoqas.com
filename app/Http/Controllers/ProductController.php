@@ -8,7 +8,9 @@ use App\Http\Requests\UpdateProductRequest;
 use App\Models\Product;
 use App\Models\Project;
 use App\Services\ProductPlanService;
+use App\Models\ProductSegment;
 use App\Services\SalesCalculationService;
+use App\Services\SegmentPricing;
 use App\Support\StudyCalendar;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -82,6 +84,9 @@ class ProductController extends Controller
                 'export_growth_rates'               => $byYear((array) $product->export_growth_rates, 0),
                 'export_price_per_unit'             => $byYear((array) $product->export_price_per_unit),
             ],
+            'salesSettings'     => $this->salesSettings($project, $years),
+            'segments'          => $project->usesSalesSegments() ? $this->segmentRows($project, $product, $years, $policy, $periods) : null,
+            'exportSeasonality' => $project->has_export_sales ? $this->pattern($product->exportSeasonality ?? $seasonality) : null,
             'seasonality' => [
                 'type'      => $seasonality?->type ?? 'flat',
                 'quarterly' => $seasonality?->type === 'quarterly' ? array_map('floatval', (array) $seasonality->percentages) : [25, 25, 25, 25],
@@ -129,6 +134,131 @@ class ProductController extends Controller
             : redirect()->route('projects.raw-materials.edit', $project))->with('success', __('products.saved'));
     }
 
+    /** A saved monthly pattern as the form shows it (flat when none). @return array{type:string,quarterly:list<float>,monthly:list<float>} */
+    private function pattern(?\App\Models\Seasonality $pattern): array
+    {
+        return [
+            'type'      => $pattern?->type ?? 'flat',
+            'quarterly' => $pattern?->type === 'quarterly' ? array_map('floatval', (array) $pattern->percentages) : [25, 25, 25, 25],
+            'monthly'   => $pattern?->type === 'monthly' ? array_map('floatval', (array) $pattern->percentages) : [8.33, 8.33, 8.33, 8.33, 8.33, 8.33, 8.33, 8.33, 8.34, 8.34, 8.34, 8.34],
+        ];
+    }
+
+    /**
+     * What the sales channels and export markets panel needs: the study's lists and the exchange rates (read only here).
+     *
+     * @param  list<int>  $years
+     * @return array<string,mixed>
+     */
+    private function salesSettings(Project $project, array $years): array
+    {
+        $fx = app(SegmentPricing::class)->fxRates($project);
+
+        return [
+            'enabled'   => $project->usesSalesSegments(),
+            'hasExport' => (bool) $project->has_export_sales,
+            'currency'  => $project->main_functional_currency,
+            'channels'  => $project->salesChannels()->orderBy('position')->orderBy('id')->get(['id', 'name'])->values(),
+            'markets'   => $project->exportMarkets()->orderBy('position')->orderBy('id')->get(['id', 'name', 'currency'])->values(),
+            'fx'        => collect($fx)->map(fn ($rates) => collect($years)->mapWithKeys(fn ($y) => [$y => (float) ($rates[$y] ?? 0)])->all())->all(),
+        ];
+    }
+
+    /** A value for each year; a year with none typed starts from the year before it. @param list<int> $years */
+    private function carry(array $stored, array $years, float|int $default): array
+    {
+        $result = [];
+        $previous = $default;
+
+        foreach ($years as $y) {
+            $value = $stored[$y] ?? null;
+            $previous = ($value === null || $value === '') ? $previous : (float) $value;
+            $result[$y] = $previous;
+        }
+
+        return $result;
+    }
+
+    /**
+     * One row for every channel and market of the study, with what this product has saved (or a starting point).
+     *
+     * @param  list<int>  $years
+     * @return array{local:list<array<string,mixed>>,export:list<array<string,mixed>>}
+     */
+    private function segmentRows(Project $project, Product $product, array $years, array $policy, int $periods): array
+    {
+        $saved = ProductSegment::where('product_id', $product->id)->get();
+        $own = fn (?ProductSegment $segment, string $stream) => $segment?->uses_own_terms
+            ? $this->policyRows((array) $segment->collection_policy_value, $periods)
+            : $this->policyRows((array) ($policy[$stream] ?? []), $periods);
+        $zero = collect($years)->mapWithKeys(fn ($y) => [$y => 0])->all();
+
+        $local = $project->salesChannels()->orderBy('position')->orderBy('id')->get()->values()->map(function ($channel, $n) use ($saved, $years, $own, $zero, $product) {
+            $segment = $saved->first(fn ($s) => $s->kind === 'local' && (int) $s->sales_channel_id === $channel->id);
+            $none = $saved->where('kind', 'local')->isEmpty();   // nothing saved yet: the first channel starts with the whole quantity
+
+            return [
+                'sales_channel_id'       => $channel->id,
+                'name'                   => $channel->name,
+                'allocation_percentages' => $segment ? $this->carry((array) $segment->allocation_percentages, $years, 0) : ($none && $n === 0 ? collect($years)->mapWithKeys(fn ($y) => [$y => 100])->all() : $zero),
+                'price_differences'      => $this->carry((array) ($segment?->price_differences), $years, 0),
+                'uses_own_terms'         => (bool) $segment?->uses_own_terms,
+                'collection_policy_value' => $own($segment, 'local'),
+            ];
+        })->all();
+
+        $export = $project->has_export_sales
+            ? $project->exportMarkets()->orderBy('position')->orderBy('id')->get()->values()->map(function ($market, $n) use ($saved, $years, $own, $zero) {
+                $segment = $saved->first(fn ($s) => $s->kind === 'export' && (int) $s->export_market_id === $market->id);
+                $none = $saved->where('kind', 'export')->isEmpty();
+
+                return [
+                    'export_market_id'       => $market->id,
+                    'name'                   => $market->name,
+                    'currency'               => $market->currency,
+                    'allocation_percentages' => $segment ? $this->carry((array) $segment->allocation_percentages, $years, 0) : ($none && $n === 0 ? collect($years)->mapWithKeys(fn ($y) => [$y => 100])->all() : $zero),
+                    'first_foreign_price'    => (float) ($segment?->first_foreign_price ?? 0),
+                    'foreign_growth_rates'   => $this->carry((array) ($segment?->foreign_growth_rates), $years, 0),
+                    'uses_own_terms'         => (bool) $segment?->uses_own_terms,
+                    'collection_policy_value' => $own($segment, 'export'),
+                ];
+            })->all()
+            : [];
+
+        return ['local' => $local, 'export' => $export];
+    }
+
+    /**
+     * Each year's sales of every channel and market, from what the last calculation saved.
+     *
+     * @param  list<int>  $years
+     * @return array{local:list<array<string,mixed>>,export:list<array<string,mixed>>}  year => lines
+     */
+    private function segmentResults(Project $project, Product $product, array $years, int $startYear, $timeline): array
+    {
+        $segments = ProductSegment::where('product_id', $product->id)->with(['salesChannel', 'exportMarket'])->get();
+        $out = [];
+
+        foreach ($years as $year) {
+            $lines = ['local' => [], 'export' => []];
+
+            foreach ($segments as $segment) {
+                $values = (array) $segment->monthly_values;
+                $quantities = (array) $segment->monthly_quantities;
+                $months = array_filter(array_keys($values), fn ($m) => $timeline->yearIndexOf((int) $m) === $year);
+                $quantity = array_sum(array_map(fn ($m) => $quantities[$m] ?? 0, $months));
+                $value = array_sum(array_map(fn ($m) => $values[$m] ?? 0, $months));
+                $name = $segment->kind === 'local' ? $segment->salesChannel?->name : $segment->exportMarket?->name;
+
+                $lines[$segment->kind][] = ['name' => (string) $name, 'quantity' => $quantity, 'value' => $value, 'price' => $quantity > 0 ? $value / $quantity : 0];
+            }
+
+            $out[$year] = $lines;
+        }
+
+        return $out;
+    }
+
     /** @return list<array<string,mixed>> one row per period (first operation year, following years), always with two payment slots */
     private function policyRows(array $stored, int $periods): array
     {
@@ -169,6 +299,7 @@ class ProductController extends Controller
         $targets = (array) $product->target_quantities;
         $localTargets = (array) $product->local_target_quantities;
         $rows = [];
+        $byYear = $project->usesSalesSegments() ? $this->segmentResults($project, $product, $years, $startYear, $timeline) : [];
 
         foreach ($years as $year) {
             $months = array_filter(array_keys($values), fn ($m) => $timeline->yearIndexOf((int) $m) === $year);
@@ -185,6 +316,8 @@ class ProductController extends Controller
                 'export_quantity'   => $sold * (1 - $localShare),
                 'made_quantity'     => array_sum(array_map(fn ($m) => $made[$m] ?? 0, $months)),
                 'closing_inventory' => $months === [] ? 0 : ($closing[max($months)] ?? 0),
+                'local_segments'    => $byYear[$year]['local'] ?? [],
+                'export_segments'   => $byYear[$year]['export'] ?? [],
             ];
         }
 

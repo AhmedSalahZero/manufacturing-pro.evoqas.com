@@ -1,15 +1,20 @@
 <!--
   ZAVERO Manufacturing Pro — Fixed assets of a study ( /projects/{id}/fixed-assets )
   Location: resources/js/Pages/FixedAssets/Edit.vue
-  Machines, buildings, vehicles... Each asset has a price, the months it is bought, a depreciation period (administration
-  and manufacturing part, replacement cost), payment terms (cash, customised payments or instalments - set in pop-ups),
-  funding (own money and a bank loan whose terms are set in a pop-up) and how the manufacturing depreciation is shared between
-  the products (a pop-up). The page keeps every asset to three short lines.
+  Four cards, one for each kind of asset:
+    Land          bought on one date, never depreciated.
+    Construction  a start and an end date; spent evenly or on an S-curve; each payment line chooses "taken from".
+    Machines      a purchase, a delivery and a ready date (after installation and testing); can be paid by milestones.
+    Other         bought on one date and depreciated.
+  Each asset has a price, its dates, a depreciation period (administration and manufacturing part, replacement cost; not for
+  land), payment terms (cash, customised payments, instalments or - for machines - milestones, set in pop-ups), funding (own
+  money and a bank loan whose terms are set in a pop-up) and how the manufacturing depreciation is shared between the
+  products (a pop-up). The page keeps every asset to three short lines.
   Saved by App\Http\Controllers\FixedAssetController@update (App\Services\FixedAssetService), which recalculates the study.
   Months are saved by position in the study (0 = the study's first month).
 -->
 <script setup>
-import { computed, nextTick, ref } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { Link, useForm, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import ConfirmDialog from '@/Components/ConfirmDialog.vue';
@@ -31,11 +36,36 @@ const props = defineProps({
 const { t } = useI18n();
 // A customer of a "fill" link has no financial statements to go to: his last page for a new company ends with "Save and finish".
 const isFill = computed(() => usePage().props.public?.kind === 'fill');
-const TERMS = ['cash', 'customize', 'installment'];
+const KINDS = ['land', 'construction', 'machine', 'other'];
+const ACCENTS = { land: '--k2', construction: '--k1', machine: '--k4', other: '--k5' };
+const CURVES = ['flat', 's_curve'];
+const MILESTONES = ['purchase', 'delivery', 'ready'];
+// The milestone pay-outs hang on these dates of the machine: purchase -> start, delivery -> delivery, ready -> end.
+const MILESTONE_DATE = { purchase: 'start', delivery: 'delivery', ready: 'end' };
+// The dates each kind asks for (land and other assets are bought on one date).
+const DATES = {
+    land: [{ field: 'start', label: 'assets.purchaseDate' }],
+    other: [{ field: 'start', label: 'assets.purchaseDate' }],
+    construction: [{ field: 'start', label: 'assets.startDate' }, { field: 'end', label: 'assets.endDate' }],
+    machine: [{ field: 'start', label: 'assets.purchaseDate' }, { field: 'delivery', label: 'assets.deliveryDate' }, { field: 'end', label: 'assets.readyDate' }],
+};
+const termsFor = (kind) => (kind === 'machine' ? ['cash', 'customize', 'installment', 'milestone'] : ['cash', 'customize', 'installment']);
+const kindOf = (r) => r.asset_type || 'construction';
+const blankMilestones = () => ({ purchase: { rate: '', days: 0 }, delivery: { rate: '', days: 0 }, ready: { rate: '', days: 0 } });
+const milestonesOf = (m) => Object.fromEntries(MILESTONES.map((k) => [k, { rate: m?.[k]?.rate ?? '', days: m?.[k]?.days ?? 0 }]));
 const DEPRECIATION_YEARS = [0, ...Array.from({ length: 23 }, (_, i) => i + 3)];
 
 const form = useForm({
-    rows: props.rows.map((r) => ({ ...r, custom: r.custom.map((c) => ({ ...c })), allocations: { ...r.allocations }, key: `old-${r.id}` })),
+    rows: props.rows.map((r) => ({
+        ...r,
+        asset_type: kindOf(r),
+        execution_curve: r.execution_curve || 'flat',
+        delivery: r.delivery || r.start,
+        milestones: milestonesOf(r.milestones),
+        custom: r.custom.map((c) => ({ ...c })),
+        allocations: { ...r.allocations },
+        key: `old-${r.id}`,
+    })),
     after: 'stay',
 });
 
@@ -60,18 +90,41 @@ const tiles = computed(() => {
     ];
 });
 
+// One card for each kind of asset; every asset keeps its place (i) in the form's list, which is what the checks refer to.
+const sections = computed(() => KINDS.map((kind) => ({
+    kind,
+    accent: ACCENTS[kind],
+    items: form.rows.map((r, i) => ({ r, i })).filter(({ r }) => kindOf(r) === kind),
+})));
+
+// The dates of a construction or a machine always follow each other: a later start moves the end (and the delivery) with it.
+watch(() => form.rows.map((r) => `${r.start}|${r.delivery}|${r.end}`).join(), () => {
+    form.rows.forEach((r) => {
+        if (kindOf(r) === 'machine') {
+            if (r.start && r.delivery && r.delivery < r.start) r.delivery = r.start;
+            if (r.delivery && r.end && r.end < r.delivery) r.end = r.delivery;
+        } else if (kindOf(r) === 'construction' && r.start && r.end && r.end < r.start) {
+            r.end = r.start;
+        }
+    });
+});
+
 let counter = 0;
-function addRow() {
+function addRow(kind) {
+    const month = `${props.project.startYear}-01`;
     form.rows.push({
-        id: null, key: `new-${counter++}`, name: '', counts: 1, amount: '', depreciation_duration: 5,
-        start: `${props.project.startYear}-01`, end: `${props.project.startYear}-01`,
+        id: null, key: `new-${counter++}`, asset_type: kind, execution_curve: 'flat', name: '', counts: 1, amount: '',
+        depreciation_duration: kind === 'land' ? 0 : 5,
+        start: month, delivery: month, end: month,
         admin_depreciation_percentage: 0, replacement_cost_rate: 0, replacement_cost_interval: 1,
-        payment_terms: 'cash', custom: [{ due_days: '', rate: '', from_total: false }],
+        // A construction usually starts with a down payment on the total price; the lines after it follow each month's work.
+        payment_terms: 'cash', custom: [{ due_days: kind === 'construction' ? 0 : '', rate: '', from_total: kind === 'construction' }],
+        milestones: blankMilestones(),
         reservation_rate: 0, contractual_rate: 0, after_months: 0, installment_grace_period: 0, installment_count: 1, payment_installment_interval: 'monthly',
         equity_funding_rate: 100, interest_rate: 0, grace_period: 0, tenor: 60, installment_interval: 'monthly',
         is_as_revenue_percentages: true, allocations: Object.fromEntries(props.products.map((p) => [p.id, 0])),
     });
-    nextTick(() => document.querySelector('.rep:last-of-type input')?.focus());
+    nextTick(() => document.querySelector(`.rep[data-asset="${form.rows.length - 1}"] input`)?.focus());
 }
 
 const removing = ref(null);
@@ -87,6 +140,11 @@ const isOpen = (kind) => popup.value?.kind === kind && editRow.value !== null;
 const customTotal = (row) => row.custom.reduce((s, c) => s + num(c.rate), 0);
 const customCount = (row) => row.custom.filter((c) => c.due_days !== '' && c.due_days !== null && c.rate !== '' && c.rate !== null).length;
 const canAddLine = computed(() => editRow.value && editRow.value.custom.length < props.options.slots);
+// "Taken from" (the total price or each month's work) only exists for a construction, which is spent over several months.
+const showBasis = computed(() => !!editRow.value && kindOf(editRow.value) === 'construction');
+const milestoneTotal = (row) => MILESTONES.reduce((s, k) => s + num(row.milestones[k].rate), 0);
+const milestoneBrief = (row) => (milestoneTotal(row) > 0 ? MILESTONES.map((k) => `${Number(num(row.milestones[k].rate).toFixed(2))}%`).join(' · ') : t('assets.termsSet'));
+const milestoneError = (i) => Object.keys(form.errors).some((k) => k === `rows.${i}.milestones` || k === `rows.${i}.payment_terms` || k.startsWith(`rows.${i}.milestones.`));
 const addLine = () => editRow.value.custom.push({ due_days: '', rate: '', from_total: false });
 const removeLine = (n) => { editRow.value.custom.splice(n, 1); if (!editRow.value.custom.length) addLine(); };
 const customError = (i) => Object.keys(form.errors).some((k) => k === `rows.${i}.custom` || k.startsWith(`rows.${i}.custom.`));
@@ -94,6 +152,7 @@ const remaining = (r) => Math.max(0, 100 - num(r.reservation_rate) - num(r.contr
 function chooseTerms(row, i) {
     if (row.payment_terms === 'customize') open('payments', i);
     else if (row.payment_terms === 'installment') open('instalments', i);
+    else if (row.payment_terms === 'milestone') open('milestones', i);
 }
 
 const shareTotal = (row) => props.products.reduce((s, p) => s + num(row.allocations[p.id]), 0);
@@ -143,12 +202,15 @@ function save(after) {
         <form novalidate @submit.prevent="save('stay')">
             <fieldset :disabled="readOnly" style="border:0;margin:0;padding:0;min-width:0">
 
-                <section class="card assetcard" style="--ca: var(--k5)">
-                    <h3>{{ t('assets.title') }}</h3>
-                    <p class="mute small">{{ t('assets.hint') }}</p>
-                    <p v-if="!form.rows.length" class="empty">{{ t('assets.empty') }}</p>
+                <p class="mute small">{{ t('assets.hint') }}</p>
+                <p v-if="!form.rows.length" class="empty">{{ t('assets.empty') }}</p>
 
-                    <div v-for="(r, i) in form.rows" :key="r.key" class="rep" :data-asset="i">
+                <!-- One card for each kind of asset -->
+                <section v-for="sec in sections" :key="sec.kind" class="card assetcard" :data-kind-card="sec.kind" :style="{ '--ca': `var(${sec.accent})` }">
+                    <h3>{{ t(`assets.kinds.${sec.kind}.title`) }}</h3>
+                    <p class="mute small">{{ t(`assets.kinds.${sec.kind}.hint`) }}</p>
+
+                    <div v-for="{ r, i } in sec.items" :key="r.key" class="rep" :data-asset="i" :data-kind="sec.kind">
                         <!-- Line 1: what and when -->
                         <div class="repTop">
                             <div class="fld w2">
@@ -170,21 +232,23 @@ function save(after) {
                                 <label>{{ t('assets.total') }}</label>
                                 <output class="inp ro" dir="ltr">{{ show(total(r)) }}</output>
                             </div>
-                            <div class="fld w2">
-                                <label>{{ t('assets.from') }}</label>
-                                <MonthYearInput v-model="r.start" :min-year="project.startYear" :max-year="project.endYear" :invalid="invalid(`rows.${i}.start`)" />
-                                <span v-if="err(i, 'start')" class="dng small" role="alert">{{ err(i, 'start') }}</span>
+                            <!-- The dates of this kind of asset -->
+                            <div v-for="d in DATES[sec.kind]" :key="d.field" class="fld w2" :data-date="d.field">
+                                <label>{{ t(d.label) }}</label>
+                                <MonthYearInput v-model="r[d.field]" :min-year="project.startYear" :max-year="project.endYear" :invalid="invalid(`rows.${i}.${d.field}`)" />
+                                <span v-if="err(i, d.field)" class="dng small" role="alert">{{ err(i, d.field) }}</span>
                             </div>
-                            <div class="fld w2">
-                                <label>{{ t('assets.to') }}</label>
-                                <MonthYearInput v-model="r.end" :min-year="project.startYear" :max-year="project.endYear" :invalid="invalid(`rows.${i}.end`)" />
-                                <span v-if="err(i, 'end')" class="dng small" role="alert">{{ err(i, 'end') }}</span>
+                            <div v-if="sec.kind === 'construction'" class="fld w2">
+                                <label :for="`as-${i}-curve`">{{ t('assets.spending') }}</label>
+                                <select :id="`as-${i}-curve`" v-model="r.execution_curve" class="sel">
+                                    <option v-for="c in CURVES" :key="c" :value="c">{{ t(`assets.curves.${c}`) }}</option>
+                                </select>
                             </div>
                             <button type="button" class="btn btn-line sm delbtn" @click="removing = i">{{ t('projects.form.remove') }}</button>
                         </div>
 
-                        <!-- Line 2: depreciation -->
-                        <div class="repTop line2">
+                        <!-- Line 2: depreciation (land is never depreciated) -->
+                        <div v-if="sec.kind !== 'land'" class="repTop line2">
                             <div class="fld w2">
                                 <label :for="`as-${i}-dep`">{{ t('assets.depreciation') }}</label>
                                 <select :id="`as-${i}-dep`" v-model.number="r.depreciation_duration" class="sel" :aria-invalid="invalid(`rows.${i}.depreciation_duration`)">
@@ -226,7 +290,7 @@ function save(after) {
                                 <label :for="`as-${i}-terms`">{{ t('assets.paymentTerms') }}</label>
                                 <div class="termsRow">
                                     <select :id="`as-${i}-terms`" v-model="r.payment_terms" class="sel" :aria-invalid="invalid(`rows.${i}.payment_terms`)" @change="chooseTerms(r, i)">
-                                        <option v-for="term in TERMS" :key="term" :value="term">{{ t(`assets.terms.${term}`) }}</option>
+                                        <option v-for="term in termsFor(sec.kind)" :key="term" :value="term">{{ t(`assets.terms.${term}`) }}</option>
                                     </select>
                                     <button v-if="r.payment_terms === 'customize'" type="button" class="hirebtn" :class="{ has: customCount(r) > 0 && Math.abs(customTotal(r) - 100) <= 0.01, bad: customError(i) }" :aria-invalid="customError(i)" @click="open('payments', i)">
                                         {{ customCount(r) > 0 ? t('assets.termsCount', { n: customCount(r) }) : t('assets.termsSet') }} <span aria-hidden="true">✎</span>
@@ -234,8 +298,13 @@ function save(after) {
                                     <button v-if="r.payment_terms === 'installment'" type="button" class="hirebtn has" :class="{ bad: invalid(`rows.${i}.reservation_rate`) }" @click="open('instalments', i)">
                                         {{ t('assets.termsInstalments') }} <span aria-hidden="true">✎</span>
                                     </button>
+                                    <button v-if="r.payment_terms === 'milestone'" type="button" class="hirebtn" :class="{ has: Math.abs(milestoneTotal(r) - 100) <= 0.01, bad: milestoneError(i) }" :aria-invalid="milestoneError(i)" data-milestones @click="open('milestones', i)">
+                                        {{ milestoneBrief(r) }} <span aria-hidden="true">✎</span>
+                                    </button>
                                 </div>
                                 <span v-if="err(i, 'custom')" class="dng small" role="alert">{{ err(i, 'custom') }}</span>
+                                <span v-if="err(i, 'milestones')" class="dng small" role="alert">{{ err(i, 'milestones') }}</span>
+                                <span v-if="err(i, 'payment_terms')" class="dng small" role="alert">{{ err(i, 'payment_terms') }}</span>
                                 <span v-if="err(i, 'reservation_rate')" class="dng small" role="alert">{{ err(i, 'reservation_rate') }}</span>
                             </div>
                             <div class="fld">
@@ -267,7 +336,7 @@ function save(after) {
                         </div>
                     </div>
 
-                    <button type="button" class="btn btn-line sm" @click="addRow">+ {{ t('assets.add') }}</button>
+                    <button type="button" class="btn btn-line sm" :data-add="sec.kind" @click="addRow(sec.kind)">+ {{ t(`assets.kinds.${sec.kind}.add`) }}</button>
                 </section>
 
                 <!-- Calculated results -->
@@ -313,16 +382,16 @@ function save(after) {
         </form>
 
         <!-- Customised payments of one asset -->
-        <ModalDialog :open="isOpen('payments')" :title="t('assets.paymentsTitle', { name: editRow?.name || t('assets.name') })" :subtitle="t('assets.paymentsHint')" wide @close="close">
+        <ModalDialog :open="isOpen('payments')" :title="t('assets.paymentsTitle', { name: editRow?.name || t('assets.name') })" :subtitle="showBasis ? t('assets.paymentsHint') : t('assets.paymentsHintOneDate')" wide @close="close">
             <div v-if="editRow" class="custom">
-                <div class="customHead"><span>{{ t('assets.dueDays') }}</span><span>{{ t('assets.rate') }}</span><span>{{ t('assets.basis') }}</span><span /></div>
-                <div v-for="(c, n) in editRow.custom" :key="n" class="customRow">
+                <div class="customHead" :class="{ nb: !showBasis }"><span>{{ t('assets.dueDays') }}</span><span>{{ t('assets.rate') }}</span><span v-if="showBasis">{{ t('assets.basis') }}</span><span /></div>
+                <div v-for="(c, n) in editRow.custom" :key="n" class="customRow" :class="{ nb: !showBasis }">
                     <select v-model="c.due_days" class="sel" :aria-label="t('assets.dueDays')">
                         <option value="">—</option>
                         <option v-for="d in options.dueDays" :key="d" :value="d">{{ daysLabel(d) }}</option>
                     </select>
                     <input v-model="c.rate" class="inp" dir="ltr" type="number" step="any" min="0" max="100" :aria-label="t('assets.rate')" placeholder="%">
-                    <select v-model="c.from_total" class="sel" :aria-label="t('assets.basis')">
+                    <select v-if="showBasis" v-model="c.from_total" class="sel" :aria-label="t('assets.basis')">
                         <option :value="false">{{ t('assets.fromExecution') }}</option>
                         <option :value="true">{{ t('assets.fromTotal') }}</option>
                     </select>
@@ -330,6 +399,21 @@ function save(after) {
                 </div>
                 <button v-if="canAddLine" type="button" class="btn btn-line sm" @click="addLine">+ {{ t('assets.addPayment') }}</button>
                 <p class="small total" :class="Math.abs(customTotal(editRow) - 100) > 0.01 ? 'dng' : 'okc'">{{ t('assets.customTotal', { n: formatNumber(customTotal(editRow), 2) }) }}</p>
+            </div>
+        </ModalDialog>
+
+        <!-- The milestones of a machine: at the purchase, at the delivery and when it is ready -->
+        <ModalDialog :open="isOpen('milestones')" :title="t('assets.milestonesTitle', { name: editRow?.name || t('assets.name') })" :subtitle="t('assets.milestonesHint')" wide @close="close">
+            <div v-if="editRow" class="custom">
+                <div class="customHead ms"><span>{{ t('assets.milestone') }}</span><span>{{ t('assets.rate') }}</span><span>{{ t('assets.dueDays') }}</span></div>
+                <div v-for="key in MILESTONES" :key="key" class="customRow ms" :data-milestone="key">
+                    <span class="msName">{{ t(`assets.milestones.${key}`) }} <small dir="ltr">{{ editRow[MILESTONE_DATE[key]] }}</small></span>
+                    <input v-model="editRow.milestones[key].rate" class="inp" dir="ltr" type="number" step="any" min="0" max="100" :aria-label="t(`assets.milestones.${key}`)" placeholder="%">
+                    <select v-model.number="editRow.milestones[key].days" class="sel" :aria-label="t('assets.dueDays')">
+                        <option v-for="d in options.dueDays" :key="d" :value="d">{{ daysLabel(d) }}</option>
+                    </select>
+                </div>
+                <p class="small total" :class="Math.abs(milestoneTotal(editRow) - 100) > 0.01 ? 'dng' : 'okc'">{{ t('assets.customTotal', { n: formatNumber(milestoneTotal(editRow), 2) }) }}</p>
             </div>
         </ModalDialog>
 
@@ -435,6 +519,10 @@ function save(after) {
 .chk { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 .custom { padding-bottom: 8px; }
 .customHead, .customRow { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr) 40px; gap: 10px; align-items: center; margin-bottom: 8px; }
+.customHead.nb, .customRow.nb { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) 40px; }
+.customHead.ms, .customRow.ms { grid-template-columns: minmax(0, 2.4fr) minmax(0, 1fr) minmax(0, 1.6fr); }
+.msName { font-weight: 600; }
+.msName small { margin-inline-start: 6px; color: var(--mute); font-weight: 500; }
 .customHead { font-size: 12.5px; font-weight: 600; color: var(--mute); }
 .total { margin-top: 10px; font-weight: 700; }
 .okc { color: var(--green-ink); }

@@ -16,7 +16,7 @@ use Inertia\Response;
 //  ZAVERO Manufacturing Pro — SensitivityController ("what if …?" side by side with the study)
 //  Location: app/Http/Controllers/SensitivityController.php
 //
-//  show    the three settings per product and, when any is set, the dashboard of the study next to the dashboard with them
+//  show    the three settings per product (and the FX rate change of the study) and, when any is set, the dashboard of the study next to the dashboard with them
 //          GET /projects/{project}/sensitivity
 //  update  saves the settings (they never change the study itself)   PUT /projects/{project}/sensitivity
 //  How the scenario is worked out: App\Services\SensitivityService (the whole calculation again, rolled back).
@@ -40,15 +40,18 @@ class SensitivityController extends Controller
             'ready'    => false,
             'canEdit'  => Gate::allows('update', $project),
             'rows'     => $rows,
+            'fx'       => $fx = $this->sensitivity->fx($project),
+            // The FX what-if only means something when the study sells abroad in a foreign currency.
+            'hasFx'    => $project->has_export_sales && $project->fxRates()->exists(),
             'compared' => false,
         ];
 
         if ($this->calculations->timeline($project) !== null && $rows !== []) {
             $props['ready'] = true;
 
-            if ($this->sensitivity->hasChanges($rows)) {
+            if ($this->sensitivity->hasChanges($rows, $fx)) {
                 $props['compared'] = true;
-                $props += $this->sensitivity->compare($project, $rows);
+                $props += $this->sensitivity->compare($project, $rows, $fx);
             }
         }
 
@@ -67,6 +70,7 @@ class SensitivityController extends Controller
             'rows.*.target' => ['required', 'numeric', 'between:-100,1000'],
             'rows.*.rm'     => ['required', 'numeric', 'between:-100,1000'],
             'rows.*.days'   => ['required', 'integer', 'between:-365,365'],
+            'fx'            => ['sometimes', 'numeric', 'between:-99,1000'],
         ]);
 
         $rows = collect($data['rows'])->map(fn ($row) => [
@@ -76,7 +80,7 @@ class SensitivityController extends Controller
             'days'   => (int) $row['days'],
         ])->all();
 
-        $this->sensitivity->save($project, $request->user(), $rows);
+        $this->sensitivity->save($project, $request->user(), $rows, isset($data['fx']) ? round((float) $data['fx'], 2) : null);
 
         return redirect()->route('projects.sensitivity', $project)->with('success', __('sharing.sensitivity_saved'));
     }

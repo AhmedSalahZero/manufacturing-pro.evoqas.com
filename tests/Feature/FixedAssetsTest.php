@@ -169,6 +169,165 @@ class FixedAssetsTest extends TestCase
         ]))->assertSessionHasErrors(['rows.0.custom']);
     }
 
+    // ── Kinds of asset: land, construction, machine, other ──────────────────
+
+    public function test_land_is_bought_in_one_month_and_is_not_depreciated(): void
+    {
+        $project = $this->study();
+
+        // The end month and the depreciation sent with it are ignored for land.
+        $this->actingAs($this->owner)->put(route('projects.assets.update', $project), $this->body([
+            $this->asset(['name' => 'Plot', 'asset_type' => 'land', 'start' => '2026-03', 'end' => '2026-08', 'depreciation_duration' => 5, 'replacement_cost_rate' => 10]),
+        ]))->assertSessionHasNoErrors();
+
+        $asset = FixedAsset::where('project_id', $project->id)->firstOrFail();
+        $this->assertSame('land', $asset->asset_type);
+        $this->assertEquals(2, $asset->start_date);
+        $this->assertEquals(2, $asset->end_date);
+        $this->assertEquals(0, $asset->depreciation_duration);
+        $this->assertEqualsWithDelta(12000.0, (float) ((array) $asset->ffe_payment)[2], 0.01);
+        $this->assertSame(0, DB::table('product_expense_allocations')->where('project_id', $project->id)->where('is_depreciation', 1)->count());
+    }
+
+    public function test_other_assets_have_one_month_and_are_depreciated(): void
+    {
+        $project = $this->study();
+
+        $this->actingAs($this->owner)->put(route('projects.assets.update', $project), $this->body([
+            $this->asset(['name' => 'Forklift', 'asset_type' => 'other', 'start' => '2026-03', 'end' => '', 'depreciation_duration' => 5]),
+        ]))->assertSessionHasNoErrors();
+
+        $asset = FixedAsset::where('project_id', $project->id)->firstOrFail();
+        $this->assertSame('other', $asset->asset_type);
+        $this->assertEquals(2, $asset->end_date);
+        $this->assertSame(2, DB::table('product_expense_allocations')->where('project_id', $project->id)->where('is_depreciation', 1)->count());
+    }
+
+    public function test_a_construction_can_be_spent_on_an_s_curve(): void
+    {
+        $project = $this->study();
+
+        $this->actingAs($this->owner)->put(route('projects.assets.update', $project), $this->body([
+            $this->asset(['name' => 'Hall', 'asset_type' => 'construction', 'start' => '2026-01', 'end' => '2026-04', 'execution_curve' => 's_curve']),
+        ]))->assertSessionHasNoErrors();
+
+        $asset = FixedAsset::where('project_id', $project->id)->firstOrFail();
+        $spent = (array) $asset->ffe_execution_and_payment;
+        $this->assertSame('s_curve', $asset->execution_curve);
+        $this->assertCount(4, $spent);
+        $this->assertLessThan($spent[1], $spent[0]);   // slow start, faster in the middle
+        $this->assertEqualsWithDelta(12000.0, (float) array_sum($spent), 0.01);
+    }
+
+    public function test_a_construction_pays_a_down_payment_on_the_total_and_the_rest_after_each_months_work(): void
+    {
+        $project = $this->study();
+
+        // 12 000 built over 10 months (1 200 a month): 25 % down payment on the total, 50 % of each month's work after 30 days, 25 % after 60 days.
+        $this->actingAs($this->owner)->put(route('projects.assets.update', $project), $this->body([
+            $this->asset(['name' => 'Factory hall', 'asset_type' => 'construction', 'start' => '2026-01', 'end' => '2026-10', 'payment_terms' => 'customize', 'custom' => [
+                ['due_days' => 0, 'rate' => 25, 'from_total' => true],
+                ['due_days' => 30, 'rate' => 50, 'from_total' => false],
+                ['due_days' => 60, 'rate' => 25, 'from_total' => false],
+            ]]),
+        ]))->assertSessionHasNoErrors();
+
+        $asset = FixedAsset::where('project_id', $project->id)->firstOrFail();
+        $paid = (array) $asset->ffe_payment;
+        $this->assertEqualsWithDelta(3000.0, (float) $paid[0], 0.01);    // the down payment
+        $this->assertEqualsWithDelta(600.0, (float) $paid[1], 0.01);     // 50 % of the first month's work
+        $this->assertEqualsWithDelta(900.0, (float) $paid[2], 0.01);
+        $this->assertEqualsWithDelta(12000.0, (float) array_sum($paid), 0.01);
+        $this->assertEquals([0 => 1, 30 => 0, 60 => 0], array_map('intval', (array) $asset->from_total_or_executions));   // each line keeps its own choice
+    }
+
+    /** The production line: bought in January, delivered in July, ready in September; 50 % at the order, 30 % at delivery, 20 % when ready. */
+    private function productionLine(array $over = []): array
+    {
+        return $this->asset(array_merge([
+            'name' => 'Production line', 'asset_type' => 'machine', 'start' => '2026-01', 'delivery' => '2026-07', 'end' => '2026-09',
+            'payment_terms' => 'milestone',
+            'milestones' => ['purchase' => ['rate' => 50, 'days' => 0], 'delivery' => ['rate' => 30, 'days' => 0], 'ready' => ['rate' => 20, 'days' => 0]],
+        ], $over));
+    }
+
+    public function test_a_machine_is_saved_with_its_delivery_month_and_paid_by_milestones(): void
+    {
+        $project = $this->study();
+
+        $this->actingAs($this->owner)->put(route('projects.assets.update', $project), $this->body([$this->productionLine()]))->assertSessionHasNoErrors();
+
+        $asset = FixedAsset::where('project_id', $project->id)->firstOrFail();
+        $this->assertSame('machine', $asset->asset_type);
+        $this->assertEquals(0, $asset->start_date);
+        $this->assertEquals(6, $asset->delivery_date);
+        $this->assertEquals(8, $asset->end_date);
+
+        $paid = (array) $asset->ffe_payment;
+        $this->assertEqualsWithDelta(6000.0, (float) $paid[0], 0.01);
+        $this->assertEqualsWithDelta(3600.0, (float) $paid[6], 0.01);
+        $this->assertEqualsWithDelta(2400.0, (float) $paid[8], 0.01);
+
+        $owed = (array) $asset->ffe_payable;
+        $this->assertEqualsWithDelta(0.0, (float) $owed[5], 0.01);       // nothing is owed before the delivery
+        $this->assertEqualsWithDelta(2400.0, (float) $owed[6], 0.01);    // after the delivery the last milestone is still owed
+        $this->assertEqualsWithDelta(0.0, (float) $owed[8], 0.01);
+
+        $this->actingAs($this->owner)->get(route('projects.assets.edit', $project))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('rows.0.asset_type', 'machine')
+                ->where('rows.0.start', '2026-01')
+                ->where('rows.0.delivery', '2026-07')
+                ->where('rows.0.end', '2026-09')
+                ->where('rows.0.milestones.delivery.days', 0)
+                ->where('rows.0.payment_terms', 'milestone'));
+    }
+
+    public function test_milestones_must_add_up_to_100(): void
+    {
+        $project = $this->study();
+
+        $this->actingAs($this->owner)->put(route('projects.assets.update', $project), $this->body([
+            $this->productionLine(['milestones' => ['purchase' => ['rate' => 50, 'days' => 0], 'delivery' => ['rate' => 30, 'days' => 0], 'ready' => ['rate' => 10, 'days' => 0]]]),
+        ]))->assertSessionHasErrors(['rows.0.milestones']);
+    }
+
+    public function test_only_a_machine_can_be_paid_by_milestones(): void
+    {
+        $project = $this->study();
+
+        $this->actingAs($this->owner)->put(route('projects.assets.update', $project), $this->body([
+            $this->productionLine(['asset_type' => 'construction']),
+        ]))->assertSessionHasErrors(['rows.0.payment_terms']);
+    }
+
+    public function test_the_delivery_must_fall_between_the_purchase_and_the_ready_month(): void
+    {
+        $project = $this->study();
+
+        $this->actingAs($this->owner)->put(route('projects.assets.update', $project), $this->body([
+            $this->productionLine(['delivery' => '2026-10', 'end' => '2026-09']),
+        ]))->assertSessionHasErrors(['rows.0.delivery']);
+
+        $this->actingAs($this->owner)->put(route('projects.assets.update', $project), $this->body([
+            $this->productionLine(['start' => '2026-05', 'delivery' => '2026-03', 'end' => '2026-09']),
+        ]))->assertSessionHasErrors(['rows.0.delivery']);
+    }
+
+    public function test_a_machine_needs_a_delivery_month_and_a_construction_needs_an_end_month(): void
+    {
+        $project = $this->study();
+
+        $this->actingAs($this->owner)->put(route('projects.assets.update', $project), $this->body([
+            $this->productionLine(['delivery' => '']),
+        ]))->assertSessionHasErrors(['rows.0.delivery']);
+
+        $this->actingAs($this->owner)->put(route('projects.assets.update', $project), $this->body([
+            $this->asset(['asset_type' => 'construction', 'end' => '']),
+        ]))->assertSessionHasErrors(['rows.0.end']);
+    }
+
     public function test_the_end_month_cannot_be_before_the_start_month(): void
     {
         $project = $this->study();

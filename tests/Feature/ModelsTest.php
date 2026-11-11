@@ -7,9 +7,11 @@ use App\Models\BusinessSector;
 use App\Models\CashAndBankOpeningBalance;
 use App\Models\CashInOutStatement;
 use App\Models\EquityOpeningBalance;
+use App\Models\ExportMarket;
 use App\Models\Expense;
 use App\Models\FixedAsset;
 use App\Models\FixedAssetOpeningBalance;
+use App\Models\FxRate;
 use App\Models\IncomeStatement;
 use App\Models\LoanSchedulePayment;
 use App\Models\LongTermLoanOpeningBalance;
@@ -19,8 +21,10 @@ use App\Models\OtherDebtorsOpeningBalance;
 use App\Models\OtherLongTermLiabilitiesOpeningBalance;
 use App\Models\Product;
 use App\Models\ProductExpenseAllocation;
+use App\Models\ProductSegment;
 use App\Models\Project;
 use App\Models\RawMaterial;
+use App\Models\SalesChannel;
 use App\Models\Seasonality;
 use App\Models\Sensitivity;
 use App\Models\SensitivityLoanSchedulePayment;
@@ -48,9 +52,13 @@ class ModelsTest extends TestCase
     {
         return [
         BusinessSector::class => ['projects'],
-        Project::class => ['user', 'businessSector', 'products', 'rawMaterials', 'manpowers', 'expenses', 'fixedAssets', 'fixedAssetOpeningBalances', 'cashAndBankOpeningBalances', 'otherDebtorsOpeningBalances', 'supplierPayableOpeningBalances', 'otherCreditsOpeningBalances', 'otherLongTermLiabilitiesOpeningBalances', 'equityOpeningBalances', 'vatAndCreditWithholdTaxOpeningBalances', 'longTermLoanOpeningBalances', 'productExpenseAllocations', 'seasonalities', 'loanSchedulePayments', 'sensitivityLoanSchedulePayments', 'sharingLinks', 'sensitivity', 'incomeStatement', 'balanceSheet', 'cashInOutStatement'],
+        Project::class => ['user', 'businessSector', 'products', 'rawMaterials', 'manpowers', 'expenses', 'fixedAssets', 'fixedAssetOpeningBalances', 'cashAndBankOpeningBalances', 'otherDebtorsOpeningBalances', 'supplierPayableOpeningBalances', 'otherCreditsOpeningBalances', 'otherLongTermLiabilitiesOpeningBalances', 'equityOpeningBalances', 'vatAndCreditWithholdTaxOpeningBalances', 'longTermLoanOpeningBalances', 'productExpenseAllocations', 'seasonalities', 'loanSchedulePayments', 'sensitivityLoanSchedulePayments', 'sharingLinks', 'sensitivity', 'incomeStatement', 'balanceSheet', 'cashInOutStatement', 'salesChannels', 'exportMarkets', 'fxRates', 'productSegments'],
         Sensitivity::class => ['project', 'user'],
-        Product::class => ['project', 'rawMaterials', 'expenseAllocations', 'seasonality'],
+        Product::class => ['project', 'rawMaterials', 'expenseAllocations', 'seasonality', 'exportSeasonality', 'segments'],
+        FxRate::class => ['project'],
+        SalesChannel::class => ['project', 'segments'],
+        ExportMarket::class => ['project', 'segments'],
+        ProductSegment::class => ['product', 'salesChannel', 'exportMarket'],
         RawMaterial::class => ['project', 'products'],
         Manpower::class => ['project'],
         BalanceSheet::class => ['project'],

@@ -148,6 +148,8 @@ class SkyHealthySeederTest extends TestCase
         // The result may be positive or negative (that is what the study is for); it only has to exist.
         $this->assertNotNull($props['dashboard']['kpi']['npv']);
         $this->assertCount(7, $props['dashboard']['revenue']['value']);
+        $this->assertCount(2, $props['dashboard']['sales_breakdown']['local'], 'two sales channels');
+        $this->assertCount(2, $props['dashboard']['sales_breakdown']['export'], 'two export markets');
     }
 
     public function test_every_screen_of_the_study_opens(): void
@@ -174,4 +176,26 @@ class SkyHealthySeederTest extends TestCase
         $this->assertSame(1, User::where('email', SkyHealthySeeder::EMAIL)->count());
         $this->assertSame(1, Company::where('name_en', SkyHealthySeeder::COMPANY)->count());
     }
+
+    public function test_the_study_sells_through_channels_and_exports_in_dollars_and_euros(): void
+    {
+        $this->seed(SkyHealthySeeder::class);
+        $project = $this->study();
+
+        $this->assertTrue((bool) $project->has_export_sales);
+        $this->assertSame(['Food and supplement manufacturers', 'Distributors'], $project->salesChannels()->orderBy('position')->pluck('name')->all());
+        $this->assertSame(['usd', 'euro'], $project->exportMarkets()->orderBy('position')->pluck('currency')->all());
+        $this->assertEqualsCanonicalizing(['euro', 'usd'], $project->fxRates()->pluck('currency')->all());
+
+        $usd = $project->fxRates()->where('currency', 'usd')->first()->rates;
+        $this->assertCount(7, $usd);
+        $this->assertEqualsWithDelta(54.0, (float) $usd[0], 0.001);
+        $this->assertEqualsWithDelta(54.0 * 1.06, (float) $usd[1], 0.01);
+
+        foreach ($project->products()->with('exportSeasonality')->get() as $product) {
+            $this->assertSame(4, $product->segments()->count(), $product->name);
+            $this->assertGreaterThan(0, array_sum((array) $product->segments()->where('kind', 'export')->first()->monthly_values), $product->name);
+        }
+    }
+
 }

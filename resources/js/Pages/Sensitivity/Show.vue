@@ -18,20 +18,23 @@ const props = defineProps({
     ready: { type: Boolean, default: false },
     canEdit: { type: Boolean, default: false },
     rows: { type: Array, default: () => [] },
+    // FX rate change in % for the whole study, and whether the study has foreign currencies to apply it to.
+    fx: { type: Number, default: 0 },
+    hasFx: { type: Boolean, default: false },
     compared: { type: Boolean, default: false },
     base: { type: Object, default: null },
     scenario: { type: Object, default: null },
 });
 
 const { t } = useI18n();
-const form = useForm({ rows: props.rows.map((r) => ({ id: r.id, target: r.target, rm: r.rm, days: r.days })) });
+const form = useForm({ rows: props.rows.map((r) => ({ id: r.id, target: r.target, rm: r.rm, days: r.days })), fx: props.fx });
 const nameOf = (id) => props.rows.find((r) => r.id === id)?.name ?? '';
 const save = () => form.put(route('projects.sensitivity.update', props.project.id), { preserveScroll: true });
 const same = () => {
     const first = form.rows[0];
     form.rows = form.rows.map((r) => ({ ...r, target: first.target, rm: first.rm, days: first.days }));
 };
-const clear = () => { form.rows = form.rows.map((r) => ({ ...r, target: 0, rm: 0, days: 0 })); };
+const clear = () => { form.rows = form.rows.map((r) => ({ ...r, target: 0, rm: 0, days: 0 })); form.fx = 0; };
 
 const labels = computed(() => props.base?.periods ?? []);
 const total = (list) => list.reduce((a, b) => a + Number(b), 0);
@@ -101,6 +104,11 @@ const pair = (name, pick) => [
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+                    <div v-if="hasFx" class="fld" style="max-width:320px;margin-top:12px" data-fx>
+                        <label for="s-fx">{{ t('sensitivity.fx') }}</label>
+                        <input id="s-fx" v-model.number="form.fx" class="inp" type="number" step="0.5" min="-99" max="1000" :readonly="!canEdit" dir="ltr">
+                        <span class="mute small">{{ t('sensitivity.fxHint') }}</span>
                     </div>
                     <p v-for="(message, key) in form.errors" :key="key" class="dng small" role="alert">{{ message }}</p>
                     <p class="mute small">{{ t('sensitivity.hint') }}</p>

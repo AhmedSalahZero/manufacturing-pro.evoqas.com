@@ -134,7 +134,7 @@ final class DashboardSheet
         $scalar('npv', $x->t('dash.npv'), 'SUM('.$range('disc').')', 'ok');
         $scalar('tvok', $x->t('dash.tvOk'), 'IF('.$cell('wacc', $last).'>'.$x->name('dash.g').',1,0)', 'flag', $x->t('dash.tvOkNote'));
         $scalar('tvpv', $x->t('dash.tvPv'), $cell('tv', $last).'/'.$cell('df', $last), 'num');
-        $scalar('irr', $x->t('dash.irr'), 'IFERROR(IRR('.$range('wt').')*100,"")', 'pct', $x->t('dash.irrNote'));
+        $scalar('irr', $x->t('dash.irr'), self::irr($range('wt')), 'pct', $x->t('dash.irrNote'));
         $g->blank();
 
         // ── ratios ──
@@ -227,5 +227,16 @@ final class DashboardSheet
             $sh->height(5, 30);
         }
         $sh->freeze(3, Ctx::FIRST);
+    }
+
+    /** IRR tried from several starting guesses; a result at or below -99% is a failed search, not an answer. Blank when none works. */
+    private static function irr(string $range): string
+    {
+        $f = '""';
+        foreach ([1.0, -0.2, 0.5, -0.5, 0.1] as $guess) {
+            $f = "IFERROR(IF(IRR($range,$guess)>-0.99,IRR($range,$guess)*100,NA()),$f)";
+        }
+
+        return $f;
     }
 }

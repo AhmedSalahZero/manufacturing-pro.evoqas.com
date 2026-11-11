@@ -21,6 +21,7 @@ class FixedAsset extends Model
             'amount'                                      => 'decimal:2',
             'custom_collection_policy'                    => 'array',
             'from_total_or_executions'                    => 'array',
+            'milestone_payments'                          => 'array',
             'admin_depreciation_percentage'               => 'decimal:2',
             'manufacturing_depreciation_percentage'       => 'decimal:2',
             'equity_funding_rate'                         => 'decimal:2',

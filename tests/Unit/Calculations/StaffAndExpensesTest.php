@@ -90,6 +90,54 @@ class StaffAndExpensesTest extends TestCase
         $this->assertEqualsWithDelta(400, $byTyped[2][1], 1e-9);
     }
 
+    public function test_a_month_with_no_sales_still_carries_the_cost_but_shares_it_only_between_products_that_are_active(): void
+    {
+        // month 0: nothing at all; month 1: product 1 makes 100 units but sells none; month 2: product 1 sells 300, product 2 sells 100;
+        // month 3: only product 2 sells.
+        $values = [1 => [0 => 0, 1 => 0, 2 => 300, 3 => 0], 2 => [0 => 0, 1 => 0, 2 => 100, 3 => 50]];
+        $units = [1 => [0 => 0, 1 => 0, 2 => 30, 3 => 0], 2 => [0 => 0, 1 => 0, 2 => 10, 3 => 5]];
+        $made = [1 => [0 => 0, 1 => 100, 2 => 0, 3 => 0], 2 => [0 => 0, 1 => 0, 2 => 0, 3 => 0]];
+        $months = [0, 1, 2, 3];
+        $cost = [0 => 1000, 1 => 1000, 2 => 1000, 3 => 1000];
+
+        $active = ProductAllocation::activity($made, $units, $values, [1, 2], $months);
+        $this->assertSame([false, true, true, false], array_values($active[1]));
+        $this->assertSame([false, false, true, true], array_values($active[2]));
+
+        // shared by sales
+        $r = ProductAllocation::allocate($active, $values, [], [1, 2], $cost, true);
+        $this->assertEqualsWithDelta(1000, $r['unallocated'][0], 1e-9);          // nobody active: general expenses of that month
+        $this->assertEqualsWithDelta(0, $r['products'][1][0] + $r['products'][2][0], 1e-9);
+        $this->assertEqualsWithDelta(1000, $r['products'][1][1], 1e-9);          // production, no sales: the producing product carries it
+        $this->assertEqualsWithDelta(0, $r['unallocated'][1], 1e-9);
+        $this->assertEqualsWithDelta(750, $r['products'][1][2], 1e-9);           // normal month: by sales
+        $this->assertEqualsWithDelta(250, $r['products'][2][2], 1e-9);
+        $this->assertEqualsWithDelta(1000, $r['products'][2][3], 1e-9);
+
+        // production in two products and no sales: equal split
+        $both = ProductAllocation::activity([1 => [0 => 5], 2 => [0 => 7]], [], [], [1, 2], [0]);
+        $r = ProductAllocation::allocate($both, [1 => [0 => 0], 2 => [0 => 0]], [], [1, 2], [0 => 1000], true);
+        $this->assertEqualsWithDelta(500, $r['products'][1][0], 1e-9);
+        $this->assertEqualsWithDelta(500, $r['products'][2][0], 1e-9);
+
+        // typed 60 / 40: product 1 alone carries it until product 2 starts, then 60 / 40, and a month with nobody active is general expenses
+        $r = ProductAllocation::allocate($active, $values, [1 => 60, 2 => 40], [1, 2], $cost, false);
+        $this->assertEqualsWithDelta(1000, $r['unallocated'][0], 1e-9);
+        $this->assertEqualsWithDelta(1000, $r['products'][1][1], 1e-9);
+        $this->assertEqualsWithDelta(600, $r['products'][1][2], 1e-9);
+        $this->assertEqualsWithDelta(400, $r['products'][2][2], 1e-9);
+        $this->assertEqualsWithDelta(1000, $r['products'][2][3], 1e-9);
+
+        // whatever happens, product shares plus the unallocated part always add up to the cost
+        foreach ($months as $m) {
+            $this->assertEqualsWithDelta(1000, $r['products'][1][$m] + $r['products'][2][$m] + $r['unallocated'][$m], 1e-9);
+        }
+
+        // no product at all: everything is unallocated
+        $r = ProductAllocation::allocate([], [], [], [], [0 => 500], true);
+        $this->assertEqualsWithDelta(500, $r['unallocated'][0], 1e-9);
+    }
+
     public function test_a_fixed_monthly_expense_grows_every_3_6_or_12_months_and_vat_is_added_unless_deductible(): void
     {
         $yearly = ExpenseCalculator::fixedMonthly(100, 0, 13, 'annually', 10, false, 14, 0);

@@ -72,6 +72,12 @@ class Product extends Model
             ->withTimestamps();
     }
 
+    /** The channels (local) and markets (export) this product is allocated over. */
+    public function segments(): HasMany
+    {
+        return $this->hasMany(ProductSegment::class, 'product_id');
+    }
+
     public function expenseAllocations(): HasMany
     {
         return $this->hasMany(ProductExpenseAllocation::class, 'product_id');

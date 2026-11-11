@@ -83,13 +83,37 @@ class ExcelModelTest extends TestCase
     public static function cases(): array
     {
         $c = [];
-        foreach ([1, 2, 3, 4] as $n) {
+        foreach ([1, 2, 3, 4, 5, 6] as $n) {
             foreach (['en', 'ar'] as $lang) {
                 $c["fixture $n $lang"] = [$n, $lang];
             }
         }
 
         return $c;
+    }
+
+    /** Sales channels and export markets: the study gets an exchange-rate sheet, and every channel and market its own rows on the product sheet. */
+    public function test_channels_and_markets_get_their_own_rows_and_the_exchange_rates_their_own_sheet(): void
+    {
+        $sheetNames = function (int $fixture, string $lang): string {
+            $parts = $this->parts(ModelBuilder::build($this->fixture($fixture), $lang)->wb->toString());
+
+            return $parts['xl/workbook.xml'];
+        };
+        $this->assertStringContainsString('Exchange rates', $sheetNames(6, 'en'));
+        $this->assertStringNotContainsString('Exchange rates', $sheetNames(1, 'en'), 'a study without foreign currencies has no such sheet');
+
+        $parts = $this->parts(ModelBuilder::build($this->fixture(6), 'en')->wb->toString());
+        $text = '';
+        foreach ($parts as $name => $xml) {
+            if (str_starts_with($name, 'xl/worksheets/sheet')) {
+                $text .= $xml;
+            }
+        }
+        foreach (['Supermarkets - units sold', 'Wholesalers - sales value', 'Saudi Arabia - price in USD', 'Italy - price in EUR', 'Collections - Wholesalers', 'Collections - Saudi Arabia'] as $label) {
+            $this->assertStringContainsString($label, $text, $label);
+        }
+        $this->assertStringNotContainsString('Collections - Supermarkets', $text, 'a channel on the product terms has no statement of its own');
     }
 
     #[DataProvider('cases')]
@@ -143,6 +167,54 @@ class ExcelModelTest extends TestCase
                 $this->assertArrayHasKey($name, $defined, "$name is used but not defined");
             }
         }
+    }
+
+    /** A cost no product can take (none makes or sells that month) has its own rows and reaches general expenses; the IRR is tried from several guesses. */
+    public function test_costs_nobody_can_take_reach_general_expenses_and_the_irr_has_fallbacks(): void
+    {
+        foreach (['en', 'ar'] as $lang) {
+            $ctx = ModelBuilder::build($this->fixture(1), $lang);
+            $parts = $this->parts($ctx->wb->toString());
+            $all = '';
+            foreach ($parts as $name => $body) {
+                if (str_starts_with($name, 'xl/worksheets/sheet') || $name === 'xl/sharedStrings.xml') {
+                    $all .= $body;
+                }
+            }
+            $labels = new Labels($lang);
+            foreach (['share.active', 'share.nAct', 'exp.toU', 'fa.unalloc'] as $key) {
+                $this->assertStringContainsString(htmlspecialchars($labels->get($key), ENT_XML1), $all, "$lang $key");
+            }
+            $this->assertGreaterThanOrEqual(5, preg_match_all('/IRR\(/', $all), 'the IRR is tried from several starting guesses');
+        }
+    }
+
+    /** Land, construction (flat or S-curve), machine (delivery, ready date, milestones) and other assets reach the Fixed Assets sheet in both languages. */
+    public function test_the_kinds_of_asset_reach_the_workbook(): void
+    {
+        $words = [
+            'en' => ['Kind of asset', 'Land', 'Construction', 'Machine (delivery and installation)', 'Other fixed asset', 'S-curve', 'Delivery date (machine)', 'Machine milestone payments', 'Down payment at purchase date', 'By milestones (machine)', 'Milestone payments'],
+            'ar' => ['نوع الأصل', 'أرض', 'إنشاءات', 'ماكينة (تسليم وتركيب)', 'أصل ثابت آخر', 'منحنى S', 'تاريخ التسليم (للماكينة)', 'دفعات مراحل الماكينة', 'دفعة مقدمة عند تاريخ الشراء', 'على مراحل (ماكينة)', 'دفعات المراحل'],
+        ];
+
+        foreach ($words as $lang => $list) {
+            $parts = $this->parts(ModelBuilder::build($this->fixture(5), $lang)->wb->toString());
+            $all = html_entity_decode(implode("\n", $parts), ENT_QUOTES | ENT_XML1);
+            foreach ($list as $word) {
+                $this->assertStringContainsString($word, $all, "$lang: $word");
+            }
+            $this->assertStringContainsString('COS(PI()*', $all, 'the S-curve is a formula');
+        }
+    }
+
+    public function test_a_study_with_only_constructions_has_the_same_rows_as_before_plus_the_kind_choices(): void
+    {
+        $parts = $this->parts(ModelBuilder::build($this->fixture(1), 'en')->wb->toString());
+        $all = html_entity_decode(implode("\n", $parts), ENT_QUOTES | ENT_XML1);
+
+        $this->assertStringContainsString('Spent on the asset', $all);
+        $this->assertStringContainsString('Construction', $all);
+        $this->assertStringContainsString('Equal each month', $all);
     }
 
     public function test_a_new_company_has_no_opening_sheet_and_an_existing_one_has(): void

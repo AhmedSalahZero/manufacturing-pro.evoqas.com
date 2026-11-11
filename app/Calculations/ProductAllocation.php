@@ -9,7 +9,14 @@ namespace App\Calculations;
 //  A cost (a salary type, an expense) is split between the products either
 //    · by revenue: each product takes its share of the month's total sales value, or
 //    · by percentages typed by the person: every product takes its percentage, shared out each month only between the
-//      products that have started selling (so the shares of the month always add up to 1).
+//      products that are active that month (so the shares of the month always add up to 1).
+//
+//  A product is ACTIVE in a month when it makes or sells something in it. allocate() is the rule used by the application:
+//    · by revenue: the month's sales value is shared by sales; a month with production but no sales is shared equally between the
+//      products that make something;
+//    · by typed percentages: shared between the active products only (Pro-A alone carries the cost until Pro-B starts);
+//    · when no product is active, nothing is shared: the whole cost of that month is returned as "unallocated" and the
+//      statements show it in general and administrative expenses for that month only.
 // ══════════════════════════════════════════════════════════════════
 
 final class ProductAllocation
@@ -94,5 +101,101 @@ final class ProductAllocation
         }
 
         return $result;
+    }
+
+    /**
+     * Which products make or sell something in each month.
+     *
+     * @param  array<int,array<int,float|int>>  $made    product id => month index => quantity made
+     * @param  array<int,array<int,float|int>>  $units   product id => month index => quantity sold
+     * @param  array<int,array<int,float|int>>  $values  product id => month index => sales value
+     * @param  list<int>                        $productIds
+     * @param  list<int>                        $months
+     * @return array<int,array<int,bool>>               product id => month index => active
+     */
+    public static function activity(array $made, array $units, array $values, array $productIds, array $months): array
+    {
+        $active = [];
+        foreach ($productIds as $productId) {
+            foreach ($months as $month) {
+                $active[$productId][$month] = (float) ($made[$productId][$month] ?? 0) > 0
+                    || (float) ($units[$productId][$month] ?? 0) > 0
+                    || (float) ($values[$productId][$month] ?? 0) > 0;
+            }
+        }
+
+        return $active;
+    }
+
+    /**
+     * Typed percentages turned into monthly shares between the products that are active in the month.
+     *
+     * @param  array<int,float|int>        $percentByProduct  product id => percentage
+     * @param  array<int,array<int,bool>>  $active            from activity()
+     * @param  list<int>                   $months
+     * @return array<int,array<int,float>>                    product id => month index => share (0..1); all 0 when nobody is active
+     */
+    public static function activeTypedShares(array $percentByProduct, array $active, array $months): array
+    {
+        $shares = [];
+        foreach ($months as $month) {
+            $total = 0.0;
+            foreach ($percentByProduct as $productId => $percent) {
+                if ($active[$productId][$month] ?? false) {
+                    $total += (float) $percent;
+                }
+            }
+            foreach ($percentByProduct as $productId => $percent) {
+                $shares[$productId][$month] = $total > 0 && ($active[$productId][$month] ?? false) ? (float) $percent / $total : 0.0;
+            }
+        }
+
+        return $shares;
+    }
+
+    /**
+     * Shares a monthly cost between the products and says what no product took.
+     *
+     * @param  array<int,array<int,bool>>   $active           from activity()
+     * @param  array<int,array<int,float>>  $values           product id => month index => sales value
+     * @param  array<int,float|int>         $percentByProduct typed % (used when not by revenue)
+     * @param  list<int>                    $productIds       the products that can take a share
+     * @param  array<int,float|int>         $cost             month index => cost
+     * @return array{products:array<int,array<int,float>>,unallocated:array<int,float>}
+     */
+    public static function allocate(array $active, array $values, array $percentByProduct, array $productIds, array $cost, bool $byRevenue): array
+    {
+        $months = array_keys($cost);
+        $typed = $byRevenue ? [] : self::activeTypedShares($percentByProduct, $active, $months);
+        $products = [];
+        $unallocated = [];
+
+        foreach ($months as $month) {
+            $value = (float) $cost[$month];
+            $total = 0.0;
+            $count = 0;
+            foreach ($productIds as $productId) {
+                $total += (float) ($values[$productId][$month] ?? 0);
+                $count += ($active[$productId][$month] ?? false) ? 1 : 0;
+            }
+
+            $taken = 0.0;
+            foreach ($productIds as $productId) {
+                if ($byRevenue) {
+                    $share = $total > 0
+                        ? (float) ($values[$productId][$month] ?? 0) / $total
+                        : (($active[$productId][$month] ?? false) && $count > 0 ? 1 / $count : 0.0);
+                } else {
+                    $share = $typed[$productId][$month] ?? 0.0;
+                }
+                $products[$productId][$month] = $share * $value;
+                $taken += $share * $value;
+            }
+
+            $left = $value - $taken;
+            $unallocated[$month] = abs($left) < 0.000001 ? 0.0 : $left;
+        }
+
+        return ['products' => $products, 'unallocated' => $unallocated];
     }
 }

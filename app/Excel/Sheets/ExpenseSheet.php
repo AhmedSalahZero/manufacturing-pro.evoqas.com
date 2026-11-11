@@ -178,6 +178,9 @@ final class ExpenseSheet
             foreach ($m->products as $i => $_) {
                 $keys[] = 'a'.$i;
             }
+            if (! in_array($kind, ['expense_as_percentage', 'cost_per_unit'], true)) {
+                $keys[] = 'u';
+            }
             $g->plan(array_map(fn ($k) => $p.$k, $keys));
             $idx = fn (K $k) => $k->cal('idx');
             $sIdx = $g->lcell($p.'sIdx');
@@ -237,11 +240,20 @@ final class ExpenseSheet
                     }
                     $range = fn (string $col) => '$'.$col.'$'.$pctFirst.':$'.$col.'$'.$pctLast;
                     $row = $pctFirst + $i;
-                    $typed = ShareSheet::typed($k, '$E$'.$row, '$G$'.$row, $range('E'), $range('G'));
+                    $typed = ShareSheet::typed($k, '$E$'.$row, $range('E'), $i);
                     $base = $kind === 'one_time_expense' ? $k->r($p.'per') : $k->r($p.'aft');
 
                     return "$manuf*IF(".$g->lcell($p.'rev').'="'.$yes.'",'.$x->x('share.rs'.$i, $k->c).",$typed)*$base";
                 }, ['total' => 'sum']);
+            }
+            if (! in_array($kind, ['expense_as_percentage', 'cost_per_unit'], true)) {
+                // what no product took (none is making or selling that month) becomes a general expense of the month
+                $g->line($p.'u', $x->t('exp.unalloc'), function (K $k) use ($m, $p, $kind, $manuf) {
+                    $rows = array_map(fn ($i) => $k->r($p.'a'.$i), array_keys($m->products));
+                    $base = $kind === 'one_time_expense' ? $k->r($p.'per') : $k->r($p.'aft');
+
+                    return "$manuf*".ShareSheet::left($base, $rows === [] ? '0' : implode('+', $rows));
+                }, ['total' => 'sum', 'bold' => true]);
             }
             $g->blank(2);
         }
@@ -259,6 +271,7 @@ final class ExpenseSheet
         foreach ($m->products as $i => $_) {
             $planned[] = 'toP'.$i;
         }
+        $planned[] = 'uT';
         $g->plan($planned);
         $catSum = function (K $k, string $c) use ($list, $g, $cats) {
             $parts = [];
@@ -294,6 +307,16 @@ final class ExpenseSheet
         foreach ($m->products as $i => $pr) {
             $g->line('toP'.$i, (string) ($pr['name'] ?? ''), fn (K $k) => $all($k, 'a'.$i), ['total' => 'sum']);
         }
+        $g->line('uT', $x->t('exp.toU'), function (K $k) use ($list) {
+            $parts = [];
+            foreach ($list as $e => $row) {
+                if (! in_array($row['relation_name'], ['expense_as_percentage', 'cost_per_unit'], true)) {
+                    $parts[] = $k->r('e'.$e.'_u');
+                }
+            }
+
+            return $parts === [] ? '0' : implode('+', $parts);
+        }, ['total' => 'sum', 'bold' => true]);
         $sh->freeze(4, Ctx::FIRST);
     }
 }

@@ -9,8 +9,16 @@ namespace App\Calculations;
 //  Pure calculation, ported from the old application (Project::recalculateFixedAsset, FixedAsset, FfeExecutionAndPayment,
 //  ContractPaymentService, InstallmentWithGraceMethod, ProjectsUnderProgress, FixedAssetsPayableEndBalance).
 //
+//  Four kinds of asset (type):
+//    land          One purchase month, never depreciated.
+//    construction  Spent over the months from the start to the end month, flat (equal parts) or on an S-curve.
+//    machine       Bought in the start month, delivered in the delivery month and ready (installed and tested) in the end month.
+//                  What is paid before the delivery counts as spent when it is paid; the rest is spent at the delivery.
+//                  It can also be paid by milestones: a % at purchase, a % at delivery and a % when it is ready.
+//    other         One purchase month, depreciated.
+//
 //  What happens to one asset:
-//    1. Execution  The cost (count × amount) is spent in equal parts over the months from the start to the end month.
+//    1. Execution  The cost (count × amount) is spent in equal parts (or on an S-curve) over the months from the start to the end month.
 //    2. Payments   The supplier is paid in cash, on customised terms (a % of the total or of each month's execution, due
 //                  in days), or in instalments (reservation, contractual payment, then equal instalments).
 //    3. Funding    The owners' equity pays first; once it is used up, the bank loan pays (see LoanCalculator).
@@ -27,14 +35,21 @@ namespace App\Calculations;
 
 final class FixedAssetCalculator
 {
-    public const TERMS = ['cash', 'customize', 'installment'];
+    public const TERMS = ['cash', 'customize', 'installment', 'milestone'];
+
+    public const TYPES = ['land', 'construction', 'machine', 'other'];
+
+    public const CURVES = ['flat', 's_curve'];
+
+    /** The three moments a machine can be paid at. */
+    public const MILESTONES = ['purchase', 'delivery', 'ready'];
 
     public const INSTALLMENT_INTERVALS = ['monthly' => 1, 'quarterly' => 3, 'semi-annually' => 6, 'annually' => 12];
 
     /**
      * The whole calculation for one asset.
      *
-     * @param  array<string,mixed>  $a  count, amount, start, end, depreciation_years, admin_pct, manufacturing_pct,
+     * @param  array<string,mixed>  $a  type, curve, delivery, milestones, count, amount, start, end, depreciation_years, admin_pct, manufacturing_pct,
      *                                   replacement_rate, replacement_years, terms, policy (days => %), from_total (days => bool),
      *                                   reservation, contractual, after_months, installment_grace, installment_count,
      *                                   installment_interval, equity_rate, interest_rate, tenor, loan_interval, loan_grace
@@ -46,12 +61,25 @@ final class FixedAssetCalculator
         $maxIndex = max($indexes);
         $firstDate = $timeline->dates[$indexes[0]];
 
+        $type = (string) ($a['type'] ?? 'construction');
         $total = (float) $a['count'] * (float) $a['amount'];
         $start = (int) $a['start'];
-        $end = (int) $a['end'];
+        // Land and other assets are bought in one month; for a machine the end month is the month it is ready.
+        $end = in_array($type, ['land', 'other'], true) ? $start : (int) $a['end'];
+        $depreciationYears = $type === 'land' ? 0 : (int) $a['depreciation_years'];
+        $replacementRate = $type === 'land' ? 0.0 : (float) $a['replacement_rate'];
 
-        $execution = self::execution($total, $start, $end);
-        $payments = self::payments($a, $total, $execution, $maxIndex);
+        if ($type === 'machine') {
+            $delivery = min(max((int) ($a['delivery'] ?? $start), $start), $end);
+            $a['delivery'] = $delivery;
+            $a['end'] = $end;
+            // A machine is bought in one month: its payments are counted from the purchase, then the cost is spent as it is paid and delivered.
+            $payments = self::payments($a, $total, [$start => $total], $maxIndex);
+            $execution = self::machineExecution($total, $delivery, $payments);
+        } else {
+            $execution = self::execution($total, $start, $end, (string) ($a['curve'] ?? 'flat'));
+            $payments = self::payments($a, $total, $execution, $maxIndex);
+        }
         $funding = self::funding($payments, $total, (float) $a['equity_rate']);
 
         // Loan: drawdown, then repayment.
@@ -87,8 +115,8 @@ final class FixedAssetCalculator
             $depreciation = self::depreciation(
                 (int) array_key_last($underProgress['transferred_date_and_vales']),
                 $transferredAmount,
-                (int) $a['depreciation_years'] * 12,
-                (float) $a['replacement_rate'],
+                $depreciationYears * 12,
+                $replacementRate,
                 (int) $a['replacement_years'] * 12,
                 $operationStart,
                 $end,
@@ -131,7 +159,7 @@ final class FixedAssetCalculator
     // ── 1. Execution ───────────────────────────────────────────────
 
     /** @return array<int,float> month index => amount spent */
-    public static function execution(float $total, int $start, int $end): array
+    public static function execution(float $total, int $start, int $end, string $curve = 'flat'): array
     {
         $duration = $end === $start ? 0 : $end - $start + 1;
 
@@ -141,10 +169,49 @@ final class FixedAssetCalculator
 
         $months = [];
         for ($i = 0; $i < $duration; $i++) {
-            $months[$start + $i] = $total / $duration;
+            $months[$start + $i] = $curve === 's_curve' ? $total * self::sCurveShare($i, $duration) : $total / $duration;
         }
 
         return $months;
+    }
+
+    /**
+     * The share of the cost spent in month $i (0 = the first) of a construction that lasts $months months, on an S-curve:
+     * slow at the start, fastest in the middle, slow at the end. The running total follows (1 − cos(π × t)) / 2, so the
+     * shares always add up to exactly 100%.
+     */
+    public static function sCurveShare(int $i, int $months): float
+    {
+        return (cos(M_PI * $i / $months) - cos(M_PI * ($i + 1) / $months)) / 2;
+    }
+
+    /**
+     * What a machine costs month by month. What is paid before the delivery counts as spent in the month it is paid (an
+     * advance to the supplier); everything else is spent when the machine is delivered. So the supplier is never owed a
+     * negative amount.
+     *
+     * @param  array<int,float|int>  $payments
+     * @return array<int,float>
+     */
+    public static function machineExecution(float $total, int $delivery, array $payments): array
+    {
+        $execution = [];
+        $advance = 0.0;
+
+        foreach ($payments as $month => $amount) {
+            if ($month < $delivery) {
+                $execution[$month] = (float) $amount;
+                $advance += $amount;
+            }
+        }
+
+        $rest = $total - $advance;
+        if ($execution === [] || abs($rest) > 0.000001) {
+            $execution[$delivery] = $rest;
+        }
+        ksort($execution);
+
+        return $execution;
     }
 
     // ── 2. Payments ────────────────────────────────────────────────
@@ -166,6 +233,10 @@ final class FixedAssetCalculator
                 (float) ($a['reservation'] ?? 0), (float) ($a['contractual'] ?? 0), (int) ($a['after_months'] ?? 0),
                 (int) ($a['installment_grace'] ?? 0), (int) ($a['installment_count'] ?? 1), (string) ($a['installment_interval'] ?? 'monthly'),
             );
+        } elseif ($terms === 'milestone') {
+            $start = (int) ($a['start'] ?? 0);
+            $delivery = (int) ($a['delivery'] ?? $start);
+            $paid = self::milestonePayments($total, $start, $delivery, (int) ($a['end'] ?? $delivery), (array) ($a['milestones'] ?? []));
         } else {
             $policy = $terms === 'cash' ? [0 => 100.0] : (array) ($a['policy'] ?? []);
             $fromTotal = $terms === 'cash' ? [] : (array) ($a['from_total'] ?? []);
@@ -191,7 +262,7 @@ final class FixedAssetCalculator
     public static function contractPayments(array $execution, float $total, array $policy, array $fromTotal, bool $allFromExecution = false): array
     {
         $paid = [];
-        $first = array_key_first($execution);
+        $first = $execution === [] ? 0 : min(array_keys($execution));   // the first month of purchase, whatever the order of the list
 
         if ($allFromExecution) {
             $fromExecution = array_keys($policy);
@@ -212,6 +283,32 @@ final class FixedAssetCalculator
                 $target = $month + CollectionPolicy::monthsLater((int) $days);
                 $paid[$target] = $amount * (($policy[$days] ?? 0) / 100) + ($paid[$target] ?? 0);
             }
+        }
+
+        ksort($paid);
+
+        return $paid;
+    }
+
+    /**
+     * A machine paid by milestones: a % of the price at the purchase, a % at the delivery and a % when it is ready (installed
+     * and tested), each optionally some days later. A line whose days are under 30 lands in the same month, as everywhere.
+     *
+     * @param  array<string,array{rate?:float|int,days?:int}>  $milestones  purchase | delivery | ready => rate (%) and days
+     * @return array<int,float>
+     */
+    public static function milestonePayments(float $total, int $purchase, int $delivery, int $ready, array $milestones): array
+    {
+        $months = ['purchase' => $purchase, 'delivery' => $delivery, 'ready' => $ready];
+        $paid = [];
+
+        foreach (self::MILESTONES as $key) {
+            $rate = (float) ($milestones[$key]['rate'] ?? 0);
+            if ($rate == 0.0) {
+                continue;
+            }
+            $month = $months[$key] + CollectionPolicy::monthsLater((int) ($milestones[$key]['days'] ?? 0));
+            $paid[$month] = $total * $rate / 100 + ($paid[$month] ?? 0);
         }
 
         ksort($paid);
@@ -330,6 +427,8 @@ final class FixedAssetCalculator
         $beforeOperation = max(0, $beforeOperation);
         $beforeOperation = $operationStart >= $end ? $end : $beforeOperation;
         $finalCapitalised = $beforeOperation >= $finalExecution ? $beforeOperation : $finalExecution;
+        // A machine is still being installed and tested after its last payment: it is transferred only once it is ready.
+        $finalCapitalised = max($finalCapitalised, $end);
         $transferMonth = $finalCapitalised + $transferFactor;
 
         $capitalised = [];

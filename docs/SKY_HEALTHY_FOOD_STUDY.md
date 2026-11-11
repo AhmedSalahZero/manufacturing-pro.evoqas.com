@@ -29,7 +29,7 @@ Safe to run again: it only adds the study if it is not there yet. Tests: `php ar
 | Share sold | Bio-Active 25 / 50 / 70 / 80 / 85 / 85 / 85 %, Industrial 35 / 60 / 75 / 85 / 90 / 90 / 90 %, Membrane 15 / 30 / 45 / 55 / 60 / 60 / 60 %. In 2027 the first figure is multiplied by months selling / 12 (6, 6 and 3 months) |
 | Second production line | None. Shell supply and 85-90% use do not call for one |
 | Staff | 13 positions, 27 people from July 2027, 35 from July 2028; salaries = first estimate + 25%; +12% a year |
-| Assets | 6 assets, EGP 65.6 million in total (about 10% contingency inside), 22% bank loans on the building fit-out and the two main lines |
+| Assets | 6 assets, EGP 65.6 million in total (about 10% contingency inside), 22% bank loans on the building fit-out and the two main lines. The fit-out is a construction (S-curve); the three production lines are machines (ordered, delivered in April or May, ready in June; paid 50% / 30% / 20% by milestones, 40% / 40% / 20% for the packaging line); the vehicles and the laboratory are other assets |
 | Yearly renewal capex | 0.5% building, 2% washing line, 3% micronization line, 2% packaging / dust / effluent, 10% vehicles, 8% laboratory (replacement every 1 year) |
 | Return required on equity | 25%; tax 22.5%; perpetual growth 3% |
 
@@ -82,3 +82,6 @@ existing space, utilities, forklifts and laboratory that could lower the capex; 
 ## Files
 
 `database/seeders/SkyHealthySeeder.php`, `tests/Feature/SkyHealthySeederTest.php`, this document.
+
+## Channels and markets
+Local: Food and supplement manufacturers (55%, +3%) and Distributors (45%, -3%, own collection terms). Export: Gulf and Middle East in USD (60%) and Europe in EUR (40%). USD rises 6% a year from 54; EUR = USD x 1.08.

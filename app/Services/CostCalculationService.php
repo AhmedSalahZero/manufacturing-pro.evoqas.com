@@ -67,18 +67,20 @@ class CostCalculationService
 
             $values = [];
             $units = [];
-            $sellingStart = [];
+            $made = [];
             foreach ($project->products as $product) {
                 $values[$product->id] = (array) $product->monthly_sales_target_values;
                 $units[$product->id] = (array) $product->monthly_sales_target_quantities;
-                $sellingStart[$product->id] = (int) $product->selling_start_date;
+                $made[$product->id] = (array) (($product->product_inventory_qt_statement ?? [])['manufacturing_quantity'] ?? []);
             }
 
-            $revenueShares = ProductAllocation::revenueShares($values);
             $months = array_keys($timeline->dates);
+            $active = ProductAllocation::activity($made, $units, $values, $project->products->pluck('id')->all(), $months);
 
-            $this->manpower($project, $timeline, $revenueShares, $sellingStart, $months);
-            $this->expenses($project, $timeline, $values, $units, $revenueShares, $sellingStart, $months);
+            $unallocated = $this->manpower($project, $timeline, $values, $active, $months);
+            $unallocated['expenses'] = $this->expenses($project, $timeline, $values, $units, $active, $months);
+            // what no product took (none was making or selling) is shown in general and administrative expenses of that month
+            $project->update(['unallocated_costs' => $unallocated]);
         });
     }
 
@@ -131,8 +133,10 @@ class CostCalculationService
         return $ids === [] ? [] : array_fill_keys($ids, round(100 / count($ids), 4));
     }
 
-    private function manpower(Project $project, Timeline $timeline, array $revenueShares, array $sellingStart, array $months): void
+    /** @return array<string,array<int,float>> type => month => cost no product took */
+    private function manpower(Project $project, Timeline $timeline, array $values, array $active, array $months): array
     {
+        $unallocated = [];
         $costByType = [];
 
         foreach ($project->manpowers as $row) {
@@ -160,10 +164,11 @@ class CostCalculationService
 
             $percent = $this->manpowerPercentages($project, $type);
             $byRevenue = (bool) (($project->manpower_is_as_revenue_percentages ?? [])[$type] ?? true);
-            $typed = ProductAllocation::typedShares($percent, $sellingStart, $months);
-            $monthly[$type] = $typed;
+            $monthly[$type] = ProductAllocation::activeTypedShares($percent, $active, $months);
             $cost = Series::sum($costByType[$type] ?? [], array_keys($timeline->operationMonths));
-            $split = ProductAllocation::split($revenueShares, $typed, $productIds, $cost, $byRevenue);
+            $result = ProductAllocation::allocate($active, $values, $percent, $productIds, $cost, $byRevenue);
+            $split = $result['products'];
+            $unallocated[$type] = $result['unallocated'];
 
             foreach ($project->products as $product) {
                 if (! array_key_exists($product->id, $percent)) {
@@ -188,10 +193,14 @@ class CostCalculationService
                 ]);
             }
         }
+
+        return $unallocated;
     }
 
-    private function expenses(Project $project, Timeline $timeline, array $values, array $units, array $revenueShares, array $sellingStart, array $months): void
+    /** @return array<int,float> month => cost of the manufacturing and other operation expenses no product took */
+    private function expenses(Project $project, Timeline $timeline, array $values, array $units, array $active, array $months): array
     {
+        $unallocated = [];
         $studyEnd = ($project->end_date ? StudyCalendar::indexOf($timeline->dates, $project->end_date->format('Y-m-d')) : null) ?? max(array_keys($timeline->operationMonths) ?: [0]);
         $extendedEnd = max(array_keys($timeline->operationMonths) ?: [0]);
         $productIds = $project->products->pluck('id')->all();
@@ -244,8 +253,12 @@ class CostCalculationService
 
             if ($base !== null && (self::EXPENSE_CATEGORIES[$expense->category_id] ?? false)) {
                 $percent = array_map('floatval', (array) $expense->product_allocations);
-                $typed = ProductAllocation::typedShares($percent, $sellingStart, $months);
-                $perProduct = ProductAllocation::split($revenueShares, $typed, $productIds, $base, $byRevenue);
+                $typed = ProductAllocation::activeTypedShares($percent, $active, $months);
+                $result = ProductAllocation::allocate($active, $values, $percent, $productIds, $base, $byRevenue);
+                $perProduct = $result['products'];
+                foreach ($result['unallocated'] as $month => $left) {
+                    $unallocated[$month] = ($unallocated[$month] ?? 0.0) + $left;
+                }
             }
 
             $payments = ExpenseCalculator::payments($terms, $policy, $after, $timeline);
@@ -278,5 +291,7 @@ class CostCalculationService
         if ($allocations !== []) {
             DB::table('product_expense_allocations')->insert($allocations);
         }
+
+        return $unallocated;
     }
 }

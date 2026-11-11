@@ -11,7 +11,7 @@ final class CoverSheet
     /** Sheet keys in the order of the tabs (product sheets are added at their place). */
     public static function order(Ctx $x): array
     {
-        $keys = ['cover', 'dash', 'study'];
+        $keys = ['cover', 'dash', 'study', 'fx'];
         foreach ($x->m->products as $i => $_) {
             $keys[] = SalesSheet::key($i);
         }

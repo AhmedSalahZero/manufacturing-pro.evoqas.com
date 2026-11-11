@@ -28,6 +28,7 @@ class Project extends Model
             'study_dates'                        => 'array',
             'extended_study_dates'               => 'array',
             'new_company'                        => 'boolean',
+            'has_export_sales'                   => 'boolean',
             'start_date'                         => 'date',
             // A position in the study months (0 = the study's first month), like every product's selling start.
             'operation_start_date'               => 'integer',
@@ -44,6 +45,9 @@ class Project extends Model
             'product_fifth_selling_date'         => 'date',
             'manpower_allocations'               => 'array',
             'monthly_manpower_allocations'       => 'array',
+            'unallocated_costs'                  => 'array',
+            'unallocated_depreciation'           => 'array',
+            'unallocated_opening_depreciation'   => 'array',
             'manpower_is_as_revenue_percentages' => 'array',
             'salaries_annual_increase'           => 'decimal:2',
             'salaries_tax_rate'                  => 'decimal:2',
@@ -169,6 +173,35 @@ class Project extends Model
     public function productExpenseAllocations(): HasMany
     {
         return $this->hasMany(ProductExpenseAllocation::class, 'project_id');
+    }
+
+    public function salesChannels(): HasMany
+    {
+        return $this->hasMany(SalesChannel::class, 'project_id')->orderBy('position')->orderBy('id');
+    }
+
+    public function exportMarkets(): HasMany
+    {
+        return $this->hasMany(ExportMarket::class, 'project_id')->orderBy('position')->orderBy('id');
+    }
+
+    public function fxRates(): HasMany
+    {
+        return $this->hasMany(FxRate::class, 'project_id')->orderBy('id');
+    }
+
+    /**
+     * True once the study has defined at least one sales channel or export market. A study with none behaves as it always did:
+     * one local channel and one export market with the product's own prices (R8).
+     */
+    public function usesSalesSegments(): bool
+    {
+        return $this->salesChannels()->exists() || $this->exportMarkets()->exists();
+    }
+
+    public function productSegments(): HasMany
+    {
+        return $this->hasMany(ProductSegment::class, 'project_id');
     }
 
     public function seasonalities(): HasMany

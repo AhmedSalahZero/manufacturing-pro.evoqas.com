@@ -76,6 +76,17 @@ final class StudyCalendar
         return (int) $start->modify('+'.$durationYears.' years')->modify('-1 month')->format('Y');
     }
 
+    /**
+     * How many calendar years the study's yearly figures cover: from the start year to the year of the last study month.
+     * (Year index 0 = the start year; the same indexes the product sales tables use.)
+     */
+    public static function yearCount(string $startDate, int $durationYears): int
+    {
+        $start = self::firstOfMonth($startDate);
+
+        return self::endYear($start, $durationYears) - (int) $start->format('Y') + 1;
+    }
+
     /** Position of a "Y-m" (or "Y-m-d") month in a list of study dates, or null when it is not in the list. */
     public static function indexOf(array $studyDates, string $month): ?int
     {

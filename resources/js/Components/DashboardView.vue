@@ -47,6 +47,21 @@ const investment = computed(() => [
     { key: 'loans', value: d.value.investment.loans, accent: '--k4' },
 ]);
 
+// Sales by channel (local) and by market (export): one line per channel / market, only when the study has some.
+const salesBlocks = (ch) => {
+    const b = src.value.sales_breakdown;
+    if (!b) return [];
+    const colors = ['var(--c1)', 'var(--c2)', 'var(--c3)', 'var(--c4)', 'var(--c5)', 'var(--c6)'];
+    const item = (kind, rows) => ({
+        chart: `sales-${kind}`, title: ch(kind === 'local' ? 'salesLocal' : 'salesExport'),
+        series: rows.map((row, i) => ({ name: row.name, kind: 'line', values: row.values, color: colors[i % colors.length] })),
+        rows: rows.map((row) => ({ label: row.name, values: row.values })),
+    });
+    const items = [['local', b.local ?? []], ['export', b.export ?? []]].filter(([, rows]) => rows.length > 0).map(([kind, rows]) => item(kind, rows));
+
+    return items.length ? [{ key: 'sales', items }] : [];
+};
+
 // The two blocks of the overview: each chart with a table of its numbers underneath (one row per period, so it fits half the width).
 const overviewBlocks = computed(() => {
     const r = src.value.revenue;
@@ -60,6 +75,7 @@ const overviewBlocks = computed(() => {
             { chart: 'accumulated', title: ch('accumulated'), series: [{ name: ch('accumulated'), kind: 'line', values: r.accumulated, color: 'var(--c3)' }],
               rows: [{ label: ch('accumulated'), values: r.accumulated }] },
         ] },
+        ...salesBlocks(ch),
         { key: 'cash', items: [
             { chart: 'cash', title: ch('cashInOut'), series: [{ name: ch('cashIn'), kind: 'line', values: c.in, color: 'var(--c3)' }, { name: ch('cashOut'), kind: 'line', values: c.out, color: 'var(--c5)' }],
               rows: [{ label: ch('cashIn'), values: c.in }, { label: ch('cashOut'), values: c.out }] },

@@ -7,6 +7,7 @@ use App\Calculations\FinancialStatementsCalculator;
 use App\Calculations\FinancialStatementsCalculator as F;
 use App\Calculations\Timeline;
 use App\Models\FixedAsset;
+use App\Models\ProductSegment;
 use App\Models\Project;
 
 // ══════════════════════════════════════════════════════════════════
@@ -163,6 +164,7 @@ class DashboardService
             'years'      => array_map(fn ($y, $ms) => ['index' => $y, 'year' => (int) substr($timeline->dates[$ms[0]], 0, 4)], $keys, $years),
             'monthly'    => $dashboard['monthly'],
             'periods'    => array_map(fn ($p, $ms) => $dashboard['monthly'] ? substr($timeline->dates[$ms[0]], 0, 7) : (string) (int) substr($timeline->dates[$ms[0]], 0, 4), $periodKeys, $periods),
+            'sales_breakdown' => $this->salesBreakdown($project, $periods),
             'revenue'    => ['value' => $byPeriod($r['revenue']), 'growth' => $byPeriod($r['growth']), 'accumulated' => $byPeriod($r['accumulated'])],
             'cash'       => ['in' => $byPeriod($dashboard['cash']['in']), 'out' => $byPeriod($dashboard['cash']['out']), 'accumulated' => $byPeriod($dashboard['cash']['accumulated'])],
             'profit'     => $profit,
@@ -199,5 +201,39 @@ class DashboardService
                 'investment' => round($dashboard['investment']['fixed_assets'] + $dashboard['investment']['working_capital'], 2),
             ],
         ];
+    }
+
+    /**
+     * Sales of every channel (local) and every market (export) of the study, per period, added up over the products
+     * (two products sharing a channel name are shown as one line). Empty lists when no product has channels or markets.
+     *
+     * @param  array<int|string,list<int>>  $periods  period => the month numbers it holds
+     * @return array{local:list<array{name:string,values:list<float>}>,export:list<array{name:string,values:list<float>}>}
+     */
+    private function salesBreakdown(Project $project, array $periods): array
+    {
+        $groups = ['local' => [], 'export' => []];
+        $segments = ProductSegment::whereIn('product_id', $project->products()->pluck('id'))->with(['salesChannel', 'exportMarket'])->orderBy('id')->get();
+
+        foreach ($segments as $segment) {
+            $values = (array) $segment->monthly_values;
+            if ($values === []) {
+                continue;
+            }
+            $name = (string) ($segment->kind === 'local' ? $segment->salesChannel?->name : $segment->exportMarket?->name);
+            foreach (array_values($periods) as $i => $months) {
+                $groups[$segment->kind][$name][$i] = ($groups[$segment->kind][$name][$i] ?? 0) + array_sum(array_map(fn ($m) => (float) ($values[$m] ?? 0), $months));
+            }
+        }
+
+        $out = [];
+        foreach ($groups as $kind => $rows) {
+            $out[$kind] = [];
+            foreach ($rows as $name => $perPeriod) {
+                $out[$kind][] = ['name' => (string) $name, 'values' => array_map(fn ($i) => round((float) ($perPeriod[$i] ?? 0), 4), array_keys(array_values($periods)))];
+            }
+        }
+
+        return $out;
     }
 }

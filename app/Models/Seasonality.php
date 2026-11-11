@@ -9,6 +9,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 // Table: seasonality
 class Seasonality extends Model
 {
+    public const LOCAL = 'local';
+
+    public const EXPORT = 'export';
+
     protected $table = 'seasonality';
 
     /** Every column may be filled except the id. The screens always filter what they pass in (validated data only). */

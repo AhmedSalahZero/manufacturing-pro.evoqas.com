@@ -49,6 +49,9 @@ class SkyHealthySeeder extends Seeder
 {
     private User $user;
 
+    /** The ids of the channels and markets of the study (set once the study is saved). @var array{channels:array<string,int>,markets:array<string,int>}|null */
+    private ?array $plan = null;
+
     // ── the company and its administrator (created if missing) ───────────────────────────────
     public const COMPANY = 'Sky Healthy Food';
     public const EMAIL = 'admin@sky.com';
@@ -61,6 +64,7 @@ class SkyHealthySeeder extends Seeder
     public const FX = 54.0;              // EGP per USD (bank quotes 21-Oct-2026: about 54.4)
     public const LOCAL_GROWTH = 8;       // % a year, local prices
     public const EXPORT_GROWTH = 6;      // % a year, export prices (USD flat + gradual EGP depreciation)
+    public const EUR_PER_USD = 1.08;     // the euro is worth 8% more than the dollar (rates of the study)
     public const COST_INFLATION = 9;     // % a year, raw material cost per ton (used to turn cost into % of the price)
     public const SALARY_FACTOR = 1.25;   // salaries are the first estimate + 25% (client's instruction)
     public const SALARY_INCREASE = 12;   // % a year
@@ -202,11 +206,13 @@ class SkyHealthySeeder extends Seeder
             'intro_paragraph' => $this->intro(),
             'start_date' => '2027-01', 'duration' => self::YEARS, 'operation_start_date' => '2027-07',
             'tax_rate' => self::TAX_RATE, 'return_rate' => self::RETURN_RATE, 'perpetual_growth_rate' => self::GROWTH_RATE,
+            ...$this->salesSettings(),
             'products' => $products, 'rawMaterials' => $materials,
         ]);
 
         $p = $this->idsByName($project->products());
         $m = $this->idsByName($project->rawMaterials());
+        $this->plan = ['channels' => $project->salesChannels()->pluck('id', 'name')->all(), 'markets' => $project->exportMarkets()->pluck('id', 'name')->all()];
         $bio = $p['SKY-CAL Bio-Active'];
         $industrial = $p['SKY-CAL Industrial/Feed'];
         $membrane = $p['Eggshell Membrane Powder'];
@@ -279,13 +285,14 @@ class SkyHealthySeeder extends Seeder
         $loan = ['equity_funding_rate' => 50, 'interest_rate' => 22, 'grace_period' => 6, 'tenor' => 60, 'installment_interval' => 'quarterly'];
 
         return [
-            $this->asset('Building fit-out and utilities', 1, 10000000, 15, '2027-01', '2027-06', ['admin_depreciation_percentage' => 20, 'replacement_cost_rate' => 0.5]
+            $this->asset('Building fit-out and utilities', 1, 10000000, 15, '2027-01', '2027-06', ['asset_type' => 'construction', 'execution_curve' => 's_curve', 'admin_depreciation_percentage' => 20, 'replacement_cost_rate' => 0.5]
                 + ['equity_funding_rate' => 60, 'interest_rate' => 22, 'grace_period' => 6, 'tenor' => 60, 'installment_interval' => 'quarterly']),
-            $this->asset('Washing and membrane-separation line', 1, 15000000, 10, '2027-02', '2027-06', ['replacement_cost_rate' => 2] + $loan + $lineShare()),
-            $this->asset('Drying, milling and micronization line', 1, 24000000, 10, '2027-01', '2027-06', ['replacement_cost_rate' => 3] + $loan + $lineShare()),
-            $this->asset('Packaging, dust protection and effluent', 1, 8000000, 10, '2027-03', '2027-06', ['replacement_cost_rate' => 2] + $lineShare()),
-            $this->asset('Forklifts and vehicles', 3, 1200000, 5, '2027-06', '2027-06', ['replacement_cost_rate' => 10]),
-            $this->asset('Laboratory and office equipment', 1, 5000000, 5, '2027-04', '2027-06', ['admin_depreciation_percentage' => 30, 'replacement_cost_rate' => 8]),
+            // the production lines are machines: ordered, delivered, then installed and tested (ready in June); paid 50% at the order, 30% at delivery, 20% when ready
+            $this->asset('Washing and membrane-separation line', 1, 15000000, 10, '2027-02', '2027-06', ['asset_type' => 'machine', 'delivery' => '2027-04', 'payment_terms' => 'milestone', 'milestones' => $this->milestones(50, 30, 20), 'replacement_cost_rate' => 2] + $loan + $lineShare()),
+            $this->asset('Drying, milling and micronization line', 1, 24000000, 10, '2027-01', '2027-06', ['asset_type' => 'machine', 'delivery' => '2027-04', 'payment_terms' => 'milestone', 'milestones' => $this->milestones(50, 30, 20), 'replacement_cost_rate' => 3] + $loan + $lineShare()),
+            $this->asset('Packaging, dust protection and effluent', 1, 8000000, 10, '2027-03', '2027-06', ['asset_type' => 'machine', 'delivery' => '2027-05', 'payment_terms' => 'milestone', 'milestones' => $this->milestones(40, 40, 20), 'replacement_cost_rate' => 2] + $lineShare()),
+            $this->asset('Forklifts and vehicles', 3, 1200000, 5, '2027-06', '2027-06', ['asset_type' => 'other', 'replacement_cost_rate' => 10]),
+            $this->asset('Laboratory and office equipment', 1, 5000000, 5, '2027-05', '2027-05', ['asset_type' => 'other', 'admin_depreciation_percentage' => 30, 'replacement_cost_rate' => 8]),
         ];
     }
 
@@ -370,9 +377,71 @@ class SkyHealthySeeder extends Seeder
             'rawMaterials'                      => array_map(fn ($line) => ['raw_material_id' => $line['raw_material_id'], 'percentages' => $line['percentages']], $recipe),
             'after'                             => 'stay',
         ];
+        if ($this->plan !== null) {
+            $data += $this->productSales($def);
+        }
 
         $product = $project->products()->whereKey($productId)->firstOrFail();
         app(ProductPlanService::class)->save($project, $product, $this->validated(UpdateProductRequest::class, $data, $project));
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  Sales channels, export markets and exchange rates
+    //  Local: two kinds of buyers. Export: the Gulf and the Middle East pay in US dollars, Europe pays in euros. The dollar price stays flat
+    //  (USD 0.80 a kg and so on) and the Egyptian pound loses value a little every year (6%), which is where the old "export price grows 6%" came from.
+    // ══════════════════════════════════════════════════════════════════
+
+    /** Local channels: name, share %, price difference %, own terms (null = the product's terms). Markets: name, currency, share %. */
+    private const CHANNELS = [['Food and supplement manufacturers', 55, 3, null], ['Distributors', 45, -3, [30, 70, 0, 45, 60]]];
+
+    private const MARKETS = [['Gulf and Middle East', 'usd', 60], ['Europe', 'euro', 40]];
+
+    /** Exchange rates, EGP for one unit of the foreign currency, one per year of the study. @return array<string,list<float>> */
+    private static function rates(): array
+    {
+        $usd = array_map(fn ($y) => round(self::FX * ((1 + self::EXPORT_GROWTH / 100) ** $y), 2), range(0, self::YEARS - 1));
+
+        return ['usd' => $usd, 'euro' => array_map(fn ($rate) => round($rate * self::EUR_PER_USD, 2), $usd)];
+    }
+
+    /** The study form's sales part. @return array<string,mixed> */
+    private function salesSettings(): array
+    {
+        return [
+            'has_export_sales' => true,
+            'sales_channels'   => array_map(fn ($c) => ['name' => $c[0]], self::CHANNELS),
+            'fx_rates'         => array_map(fn ($currency, $rates) => ['currency' => $currency, 'rates' => $rates], array_keys(self::rates()), self::rates()),
+            'export_markets'   => array_map(fn ($m) => ['name' => $m[0], 'currency' => $m[1]], self::MARKETS),
+        ];
+    }
+
+    /**
+     * What a product sends for its channels and markets: the same dollar price in every market (the euro price is the dollar price at the
+     * euro rate), flat over the years.
+     *
+     * @param  array<string,mixed>  $def
+     * @return array<string,mixed>
+     */
+    private function productSales(array $def): array
+    {
+        $each = fn ($value) => array_fill(0, self::YEARS, $value);
+        $own = fn (array $t) => $this->terms($t, $t);
+        $usdPrice = $def['export_usd_kg'] * 1000;
+
+        return [
+            'export_seasonality' => ['type' => 'flat'],
+            'segments' => [
+                'local'  => array_map(fn ($c) => [
+                    'sales_channel_id' => $this->plan['channels'][$c[0]], 'allocation_percentages' => $each($c[1]), 'price_differences' => $each($c[2]),
+                    'uses_own_terms' => $c[3] !== null, 'collection_policy_value' => $c[3] === null ? null : $own($c[3]),
+                ], self::CHANNELS),
+                'export' => array_map(fn ($m) => [
+                    'export_market_id' => $this->plan['markets'][$m[0]], 'allocation_percentages' => $each($m[2]),
+                    'first_foreign_price' => $m[1] === 'usd' ? round($usdPrice, 2) : round($usdPrice / self::EUR_PER_USD, 2), 'foreign_growth_rates' => $each(0),
+                    'uses_own_terms' => false, 'collection_policy_value' => null,
+                ], self::MARKETS),
+            ],
+        ];
     }
 
     /** @param array<int,array<int,array<string,mixed>>> $policies raw material id => [period => terms] */
@@ -569,6 +638,12 @@ class SkyHealthySeeder extends Seeder
     }
 
     /** @param array<string,mixed> $over */
+    /** A machine paid by milestones: % at the purchase, % at the delivery, % when it is ready. */
+    private function milestones(int $purchase, int $delivery, int $ready): array
+    {
+        return ['purchase' => ['rate' => $purchase, 'days' => 0], 'delivery' => ['rate' => $delivery, 'days' => 0], 'ready' => ['rate' => $ready, 'days' => 0]];
+    }
+
     private function asset(string $name, int $counts, int $amount, int $years, string $start, string $end, array $over): array
     {
         return array_merge([

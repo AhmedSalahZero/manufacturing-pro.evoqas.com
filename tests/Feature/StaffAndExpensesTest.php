@@ -32,7 +32,7 @@ class StaffAndExpensesTest extends TestCase
      * A 3-year study from 2026-01 (months 0..35; with the extra year 0..47) of an existing company.
      * Valve sells 1000 a month from January 2026; Pump has no sales plan.
      */
-    private function study(bool $newCompany = false): Project
+    private function study(bool $newCompany = false, string $valveSelling = '2026-01'): Project
     {
         $project = app(ProjectService::class)->create($this->owner, 'Plant A');
 
@@ -40,7 +40,7 @@ class StaffAndExpensesTest extends TestCase
             'name' => 'Plant A', 'new_company' => $newCompany, 'main_functional_currency' => 'egp', 'intro_paragraph' => '', 'business_sector_id' => null,
             'start_date' => '2026-01', 'duration' => 3, 'operation_start_date' => '2026-01', 'tax_rate' => 22.5, 'return_rate' => 15, 'perpetual_growth_rate' => 3,
             'products' => [
-                ['name' => 'Valve', 'measurement_unit' => 'piece', 'selling_start_date' => '2026-01', 'vat_rate' => 14, 'withhold_tax_rate' => 1],
+                ['name' => 'Valve', 'measurement_unit' => 'piece', 'selling_start_date' => $valveSelling, 'vat_rate' => 14, 'withhold_tax_rate' => 1],
                 ['name' => 'Pump', 'measurement_unit' => 'piece', 'selling_start_date' => '2026-01', 'vat_rate' => 14, 'withhold_tax_rate' => 1],
             ],
             'rawMaterials' => [['name' => 'Brass', 'rm_inventory_coverage_days' => 0, 'measurement_unit' => 'kg', 'vat_rate' => 14, 'withhold_tax_rate' => 0]],
@@ -174,8 +174,9 @@ class StaffAndExpensesTest extends TestCase
             'allocations' => ['direct_labor' => [$valve->id => 70, $pump->id => 30]],
         ]))->assertSessionHasNoErrors();
 
-        $this->assertEqualsWithDelta(3000 / 0.9 * 0.7, $valve->refresh()->product_manpower_allocation[0], 0.001);
-        $this->assertEqualsWithDelta(3000 / 0.9 * 0.3, $pump->refresh()->product_manpower_allocation[0], 0.001);
+        // Pump has no sales plan and makes nothing, so it is not active: Valve carries all of it until Pump starts (typed 70 / 30 apply once both are active).
+        $this->assertEqualsWithDelta(3000 / 0.9, $valve->refresh()->product_manpower_allocation[0], 0.001);
+        $this->assertEqualsWithDelta(0, $pump->refresh()->product_manpower_allocation[0], 0.001);
 
         $this->actingAs($this->owner)->get(route('projects.manpower.edit', $project))->assertInertia(fn (Assert $page) => $page
             ->where('byRevenue.direct_labor', false)
@@ -183,6 +184,31 @@ class StaffAndExpensesTest extends TestCase
             ->has('rows', 1)
             ->where('rows.0.position', 'Welder')
             ->where('results.years', [2026, 2027, 2028, 2029]));
+    }
+
+    public function test_a_cost_nobody_can_take_goes_to_general_expenses_until_a_product_starts(): void
+    {
+        // Operation starts in January but Valve (the only product with a plan) sells from March: January and February have no sales and no production.
+        $project = $this->study(false, '2026-03');
+
+        $this->actingAs($this->owner)->put(route('projects.manpower.update', $project), $this->staff([
+            ['type' => 'direct_labor', 'position' => 'Welder', 'avg_salary' => 1000, 'existing_count' => 3, 'hirings' => []],
+        ]))->assertSessionHasNoErrors();
+        $this->actingAs($this->owner)->put(route('projects.expenses.update', $project), $this->expenses([$this->fixed()]))->assertSessionHasNoErrors();
+
+        $project->refresh();
+        $valve = $project->products()->where('name', 'Valve')->first();
+
+        // the cost still appears, but no product took it: it is the general expenses of those two months only
+        $this->assertEqualsWithDelta(0, $valve->product_manpower_allocation[0], 0.001);
+        $this->assertEqualsWithDelta(3000 / 0.9, $project->unallocated_costs['direct_labor'][0], 0.001);
+        $this->assertEqualsWithDelta(3000 / 0.9, $project->unallocated_costs['direct_labor'][1], 0.001);
+        $this->assertEqualsWithDelta(10000, $project->unallocated_costs['expenses'][0], 0.001);
+
+        // once Valve starts, the products carry it again and nothing is left over
+        $this->assertEqualsWithDelta(3000 / 0.9, $valve->product_manpower_allocation[2], 0.001);
+        $this->assertEqualsWithDelta(0, $project->unallocated_costs['direct_labor'][2], 0.001);
+        $this->assertEqualsWithDelta(0, $project->unallocated_costs['expenses'][2], 0.001);
     }
 
     public function test_overheads_staff_are_also_listed_as_indirect_manpower_of_each_product(): void
@@ -367,8 +393,9 @@ class StaffAndExpensesTest extends TestCase
 
         $shares = ProductExpenseAllocation::where('project_id', $project->id)->where('expense_name', 'Rent')->get()->keyBy('product_id');
         $this->assertCount(2, $shares);                                  // the old rows were replaced, not added to
-        $this->assertEqualsWithDelta(2500, $shares[$valve->id]->payload[0], 0.001);
-        $this->assertEqualsWithDelta(7500, $shares[$pump->id]->payload[0], 0.001);
+        // Pump is not active (no sales, no production): Valve carries the whole rent until Pump starts, whatever the typed 25 / 75.
+        $this->assertEqualsWithDelta(10000, $shares[$valve->id]->payload[0], 0.001);
+        $this->assertEqualsWithDelta(0, $shares[$pump->id]->payload[0], 0.001);
     }
 
     public function test_customised_payments_are_split_over_the_months(): void

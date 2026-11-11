@@ -28,6 +28,20 @@ final class SalesSheet
         $g = new Grid($x, $sh, $sk);
         $g->title($x->t('sales.title', $name), $x->t('sales.sub'));
 
+        // Sales channels (local) and export markets the product shares its quantity over. None saved = the old way: one local and one export price.
+        $seg = array_values((array) ($pr['segments'] ?? []));
+        $chs = array_values(array_filter($seg, fn ($r) => ($r['kind'] ?? '') === 'local'));
+        $mks = array_values(array_filter($seg, fn ($r) => ($r['kind'] ?? '') === 'export'));
+        $hasSeg = $seg !== [];
+        // Only channels (or only markets) saved: the side with none behaves as one implicit channel / market at the product's own price, as in the application.
+        if ($hasSeg && $chs === []) {
+            $chs = [['kind' => 'local', 'name' => $x->t('sales.implLocal'), 'allocation_percentages' => array_fill(0, $m->Y, 100), 'price_differences' => array_fill(0, $m->Y, 0), 'uses_own_terms' => false, 'implicit' => true]];
+        }
+        if ($hasSeg && $mks === []) {
+            $mks = [['kind' => 'export', 'name' => $x->t('sales.implExport'), 'currency' => '', 'uses_own_terms' => false, 'implicit' => true]];
+        }
+        $exportPattern = $hasSeg && ! empty($pr['export_seasonality']) ? $pr['export_seasonality'] : null;
+
         // ── inputs ──
         $g->section($x->t('sales.inputs'));
         $sell = $pr['selling_start_date'] ?? 0;
@@ -51,19 +65,27 @@ final class SalesSheet
         $g->yearInput('tgt', $x->t('sales.tgt'), $m->yearly($pr['target_percentages'] ?? []), 'in_pct');
         $g->yearInput('locp', $x->t('sales.locp'), $m->yearly($pr['local_target_quantity_percentages'] ?? []), 'in_pct', $x->t('sales.locpNote'));
         $g->yearInput('lp', $x->t('sales.lp'), $m->yearly($pr['local_price_per_unit'] ?? []), 'in_num');
-        $g->yearInput('ep', $x->t('sales.ep'), $m->yearly($pr['export_price_per_unit'] ?? []), 'in_num');
+        if (! $hasSeg || in_array(true, array_column($mks, 'implicit'), true)) {
+            $g->yearInput('ep', $x->t('sales.ep'), $m->yearly($pr['export_price_per_unit'] ?? []), 'in_num');
+        }
         $tgt = $g->rowOf('tgt');
         $cap = $g->rowOf('cap');
         $locp = $g->rowOf('locp');
         $g->yearCalc('ytq', $x->t('sales.tq'), fn ($y, $c) => "$c$cap*$c$tgt/100", 'num');
         $g->yearCalc('ylq', $x->t('sales.lq'), fn ($y, $c) => "{$c}{$g->rowOf('ytq')}*$c$locp/100", 'num');
         $g->yearCalc('yeq', $x->t('sales.eq'), fn ($y, $c) => "{$c}{$g->rowOf('ytq')}-{$c}{$g->rowOf('ylq')}", 'num');
-        $g->yearCalc('yup', $x->t('sales.up'), function ($y, $c) use ($g) {
-            $lq = $g->rowOf('ylq'); $eq = $g->rowOf('yeq'); $lp = $g->rowOf('lp'); $ep = $g->rowOf('ep');
+        if (! $hasSeg) {
+            $g->yearCalc('yup', $x->t('sales.up'), function ($y, $c) use ($g) {
+                $lq = $g->rowOf('ylq'); $eq = $g->rowOf('yeq'); $lp = $g->rowOf('lp'); $ep = $g->rowOf('ep');
 
-            return "IF($c$lq+$c$eq>0,($c$lq*$c$lp+$c$eq*$c$ep)/($c$lq+$c$eq),0)";
-        }, 'num2', $x->t('sales.upNote'));
+                return "IF($c$lq+$c$eq>0,($c$lq*$c$lp+$c$eq*$c$ep)/($c$lq+$c$eq),0)";
+            }, 'num2', $x->t('sales.upNote'));
+        }
         $g->blank();
+
+        if ($hasSeg) {
+            self::segmentsYearly($x, $g, $pr, $chs, $mks);
+        }
 
         if ($m->rms !== []) {
             $g->section($x->t('sales.recipe'));
@@ -78,42 +100,49 @@ final class SalesSheet
             $g->blank();
         }
 
-        $g->section($x->t('sales.season'));
-        $seas = $pr['seasonality'] ?? [];
         $types = ['flat' => $x->t('sales.sFlat'), 'quarterly' => $x->t('sales.sQuarterly'), 'monthly' => $x->t('sales.sMonthly')];
-        $r = $g->row;
-        $sh->set($r, 1, $x->t('sales.sType'), $x->s('label_i'))->set($r, Ctx::FIRST, $types[$seas['type'] ?? 'flat'] ?? $types['flat'], $x->s('in_list'));
-        $sh->list(Sheet::col(Ctx::FIRST).$r, array_values($types));
-        $x->cells[$sk.'.stype'] = $x->pre($sk).'$'.Sheet::col(Ctx::FIRST).'$'.$r;
-        $g->row++;
-        $pcts = array_values((array) ($seas['percentages'] ?? []));
-        $type = $seas['type'] ?? 'flat';
-        $r = $g->row;
-        $sh->set($r, 1, $x->t('sales.sQ'), $x->s('label_i'))->set($r, 2, $x->t('sales.sQNote'), $x->s('note'));
-        for ($q = 0; $q < 4; $q++) {
-            $sh->set($r, Ctx::FIRST + $q, $type === 'quarterly' ? (float) ($pcts[$q] ?? 0) : 0.0, $x->s('in_pct'));
+        // One monthly pattern: its type, the quarter and month inputs and the weight of each of the 12 months. $p is '' (local) or 'e' (export).
+        $pattern = function (string $p, ?array $seas, string $title) use ($x, $g, $sh, $types): void {
+            $g->section($title);
+            $r = $g->row;
+            $sh->set($r, 1, $x->t('sales.sType'), $x->s('label_i'))->set($r, Ctx::FIRST, $types[$seas['type'] ?? 'flat'] ?? $types['flat'], $x->s('in_list'));
+            $sh->list(Sheet::col(Ctx::FIRST).$r, array_values($types));
+            $x->cells[$g->key.'.'.$p.'stype'] = $x->pre($g->key).'$'.Sheet::col(Ctx::FIRST).'$'.$r;
+            $g->row++;
+            $pcts = array_values((array) ($seas['percentages'] ?? []));
+            $type = $seas['type'] ?? 'flat';
+            $r = $g->row;
+            $sh->set($r, 1, $x->t('sales.sQ'), $x->s('label_i'))->set($r, 2, $x->t('sales.sQNote'), $x->s('note'));
+            for ($q = 0; $q < 4; $q++) {
+                $sh->set($r, Ctx::FIRST + $q, $type === 'quarterly' ? (float) ($pcts[$q] ?? 0) : 0.0, $x->s('in_pct'));
+            }
+            $g->register($p.'sq', $r);
+            $g->row++;
+            $r = $g->row;
+            $sh->set($r, 1, $x->t('sales.sM'), $x->s('label_i'))->set($r, 2, $x->t('sales.sMNote'), $x->s('note'));
+            for ($q = 0; $q < 12; $q++) {
+                $sh->set($r, Ctx::FIRST + $q, $type === 'monthly' ? (float) ($pcts[$q] ?? 0) : 0.0, $x->s('in_pct'));
+            }
+            $g->register($p.'sm', $r);
+            $g->row++;
+            $r = $g->row;
+            $sh->set($r, 1, $x->t('sales.sW'), $x->s('label_i'))->set($r, 2, $x->t('sales.sWNote'), $x->s('note'));
+            $stype = $g->lcell($p.'stype');
+            for ($q = 0; $q < 12; $q++) {
+                $col = Sheet::col(Ctx::FIRST + $q);
+                $sq = '$'.Sheet::col(Ctx::FIRST).'$'.$g->rowOf($p.'sq').':$'.Sheet::col(Ctx::FIRST + 3).'$'.$g->rowOf($p.'sq');
+                $sm = '$'.Sheet::col(Ctx::FIRST).'$'.$g->rowOf($p.'sm').':$'.Sheet::col(Ctx::FIRST + 11).'$'.$g->rowOf($p.'sm');
+                $sh->formula($r, Ctx::FIRST + $q, 'IF('.$stype.'="'.$types['quarterly'].'",INDEX('.$sq.',1,'.intdiv($q, 3).'+1)/3/100,IF('.$stype.'="'.$types['monthly'].'",INDEX('.$sm.',1,'.($q + 1).')/100,1/12))', $x->s('pctf'));
+            }
+            $g->register($p.'sw', $r);
+            $g->row++;
+            $g->blank();
+        };
+        $pattern('', $pr['seasonality'] ?? [], $x->t($exportPattern !== null || ($hasSeg && $mks !== []) ? 'sales.seasonL' : 'sales.season'));
+        if ($hasSeg && $mks !== []) {
+            // Export sales have their own pattern; a product that saved none follows the local one.
+            $pattern('e', $exportPattern ?? ($pr['seasonality'] ?? []), $x->t('sales.seasonE'));
         }
-        $g->register('sq', $r);
-        $g->row++;
-        $r = $g->row;
-        $sh->set($r, 1, $x->t('sales.sM'), $x->s('label_i'))->set($r, 2, $x->t('sales.sMNote'), $x->s('note'));
-        for ($q = 0; $q < 12; $q++) {
-            $sh->set($r, Ctx::FIRST + $q, $type === 'monthly' ? (float) ($pcts[$q] ?? 0) : 0.0, $x->s('in_pct'));
-        }
-        $g->register('sm', $r);
-        $g->row++;
-        $r = $g->row;
-        $sh->set($r, 1, $x->t('sales.sW'), $x->s('label_i'))->set($r, 2, $x->t('sales.sWNote'), $x->s('note'));
-        $stype = $g->lcell('stype');
-        for ($q = 0; $q < 12; $q++) {
-            $col = Sheet::col(Ctx::FIRST + $q);
-            $sq = '$'.Sheet::col(Ctx::FIRST).'$'.$g->rowOf('sq').':$'.Sheet::col(Ctx::FIRST + 3).'$'.$g->rowOf('sq');
-            $sm = '$'.Sheet::col(Ctx::FIRST).'$'.$g->rowOf('sm').':$'.Sheet::col(Ctx::FIRST + 11).'$'.$g->rowOf('sm');
-            $sh->formula($r, Ctx::FIRST + $q, 'IF('.$stype.'="'.$types['quarterly'].'",INDEX('.$sq.',1,'.intdiv($q, 3).'+1)/3/100,IF('.$stype.'="'.$types['monthly'].'",INDEX('.$sm.',1,'.($q + 1).')/100,1/12))', $x->s('pctf'));
-        }
-        $g->register('sw', $r);
-        $g->row++;
-        $g->blank();
 
         $g->section($x->t('sales.policies'));
         $g->policyHeader();
@@ -122,13 +151,37 @@ final class SalesSheet
         $g->policyRow('pLL', $x->t('sales.pLL'), (array) ($pol['local'][1] ?? []));
         $g->policyRow('pEF', $x->t('sales.pEF'), (array) ($pol['export'][0] ?? []));
         $g->policyRow('pEL', $x->t('sales.pEL'), (array) ($pol['export'][1] ?? []));
+        // A channel or market with its own terms has its own two policy lines.
+        foreach ([...$chs, ...$mks] as $n => $row) {
+            if (! empty($row['uses_own_terms'])) {
+                $own = (array) ($row['collection_policy_value'] ?? []);
+                $g->policyRow('pC'.$n.'F', $x->t('sales.pSegF', (string) ($row['name'] ?? '')), (array) ($own[0] ?? []));
+                $g->policyRow('pC'.$n.'L', $x->t('sales.pSegL', (string) ($row['name'] ?? '')), (array) ($own[1] ?? $own[0] ?? []));
+            }
+        }
         $g->blank();
 
         // ── monthly ──
         $g->section($x->t('sales.monthly'));
         $g->monthHeader();
         $sw = '$'.Sheet::col(Ctx::FIRST).'$'.$g->rowOf('sw').':$'.Sheet::col(Ctx::FIRST + 11).'$'.$g->rowOf('sw');
-        $planKeys = ['rawW', 'share', 'lq', 'eq', 'q', 'lv', 'ev', 'v', '_', 'S', 'H', 'ibeg', 'need', 'made', 'avail', 'sold', 'iend', '_', 'S', 'H'];
+        $esw = $g->has('esw') ? '$'.Sheet::col(Ctx::FIRST).'$'.$g->rowOf('esw').':$'.Sheet::col(Ctx::FIRST + 11).'$'.$g->rowOf('esw') : $sw;
+        $planKeys = $hasSeg ? ['rawW', 'share', 'rawWE', 'shareE'] : ['rawW', 'share'];
+        if ($hasSeg) {
+            foreach ($chs as $i => $_) {
+                $planKeys[] = 'cq'.$i;
+            }
+            foreach ($mks as $j => $_) {
+                $planKeys[] = 'mq'.$j;
+            }
+            foreach ($chs as $i => $_) {
+                $planKeys[] = 'cv'.$i;
+            }
+            foreach ($mks as $j => $_) {
+                $planKeys[] = 'mv'.$j;
+            }
+        }
+        array_push($planKeys, 'lq', 'eq', 'q', 'lv', 'ev', 'v', '_', 'S', 'H', 'ibeg', 'need', 'made', 'avail', 'sold', 'iend', '_', 'S', 'H');
         foreach ($m->rms as $j => $rm) {
             $planKeys[] = 'cons'.$j;
         }
@@ -137,11 +190,36 @@ final class SalesSheet
 
         $g->line('rawW', $x->t('sales.rawW'), fn (K $k) => "{$k->cal('op')}*IF({$k->cal('idx')}>={$g->lcell('sellIdx')},1,0)*INDEX($sw,1,{$k->cal('mnum')})", ['style' => 'pctf']);
         $g->line('share', $x->t('sales.share'), fn (K $k) => "IF(SUMIF({$x->calRng('yidx')},{$k->cal('yidx')},{$g->rng('rawW')})=0,0,{$k->r('rawW')}/SUMIF({$x->calRng('yidx')},{$k->cal('yidx')},{$g->rng('rawW')}))", ['style' => 'pctf']);
-        $g->line('lq', $x->t('sales.mLq'), fn (K $k) => "{$k->r('share')}*{$g->pick('ylq', $k)}", ['total' => 'sum', 'style' => 'num']);
-        $g->line('eq', $x->t('sales.mEq'), fn (K $k) => "{$k->r('share')}*{$g->pick('yeq', $k)}", ['total' => 'sum']);
+        if ($hasSeg) {
+            $g->line('rawWE', $x->t('sales.rawWE'), fn (K $k) => "{$k->cal('op')}*IF({$k->cal('idx')}>={$g->lcell('sellIdx')},1,0)*INDEX($esw,1,{$k->cal('mnum')})", ['style' => 'pctf']);
+            $g->line('shareE', $x->t('sales.shareE'), fn (K $k) => "IF(SUMIF({$x->calRng('yidx')},{$k->cal('yidx')},{$g->rng('rawWE')})=0,0,{$k->r('rawWE')}/SUMIF({$x->calRng('yidx')},{$k->cal('yidx')},{$g->rng('rawWE')}))", ['style' => 'pctf']);
+            foreach ($chs as $i => $row) {
+                $g->line('cq'.$i, $x->t('sales.mSegQ', (string) $row['name']), fn (K $k) => "{$k->r('share')}*{$g->pick('chq'.$i, $k)}", ['total' => 'sum', 'style' => 'num']);
+            }
+            foreach ($mks as $j => $row) {
+                $g->line('mq'.$j, $x->t('sales.mSegQ', (string) $row['name']), fn (K $k) => "{$k->r('shareE')}*{$g->pick('mkq'.$j, $k)}", ['total' => 'sum', 'style' => 'num']);
+            }
+            foreach ($chs as $i => $row) {
+                $g->line('cv'.$i, $x->t('sales.mSegV', (string) $row['name']), fn (K $k) => "{$k->r('cq'.$i)}*{$g->pick('chp'.$i, $k)}", ['total' => 'sum']);
+            }
+            foreach ($mks as $j => $row) {
+                $g->line('mv'.$j, $x->t('sales.mSegV', (string) $row['name']), fn (K $k) => "{$k->r('mq'.$j)}*{$g->pick('mkx'.$j, $k)}", ['total' => 'sum']);
+            }
+            $sumOf = fn (K $k, string $prefix, array $rows) => $rows === [] ? '0' : implode('+', array_map(fn ($n) => $k->r($prefix.$n), array_keys($rows)));
+            $g->line('lq', $x->t('sales.mLq'), fn (K $k) => $sumOf($k, 'cq', $chs), ['total' => 'sum', 'style' => 'num', 'bold' => true]);
+            $g->line('eq', $x->t('sales.mEq'), fn (K $k) => $sumOf($k, 'mq', $mks), ['total' => 'sum', 'bold' => true]);
+        } else {
+            $g->line('lq', $x->t('sales.mLq'), fn (K $k) => "{$k->r('share')}*{$g->pick('ylq', $k)}", ['total' => 'sum', 'style' => 'num']);
+            $g->line('eq', $x->t('sales.mEq'), fn (K $k) => "{$k->r('share')}*{$g->pick('yeq', $k)}", ['total' => 'sum']);
+        }
         $g->line('q', $x->t('sales.mQ'), fn (K $k) => "{$k->r('lq')}+{$k->r('eq')}", ['total' => 'sum', 'bold' => true]);
-        $g->line('lv', $x->t('sales.mLv'), fn (K $k) => "{$k->r('lq')}*{$g->pick('lp', $k)}", ['total' => 'sum']);
-        $g->line('ev', $x->t('sales.mEv'), fn (K $k) => "{$k->r('eq')}*{$g->pick('ep', $k)}", ['total' => 'sum']);
+        if ($hasSeg) {
+            $g->line('lv', $x->t('sales.mLv'), fn (K $k) => $sumOf($k, 'cv', $chs), ['total' => 'sum', 'bold' => true]);
+            $g->line('ev', $x->t('sales.mEv'), fn (K $k) => $sumOf($k, 'mv', $mks), ['total' => 'sum', 'bold' => true]);
+        } else {
+            $g->line('lv', $x->t('sales.mLv'), fn (K $k) => "{$k->r('lq')}*{$g->pick('lp', $k)}", ['total' => 'sum']);
+            $g->line('ev', $x->t('sales.mEv'), fn (K $k) => "{$k->r('eq')}*{$g->pick('ep', $k)}", ['total' => 'sum']);
+        }
         $g->line('v', $x->t('sales.mV'), fn (K $k) => "{$k->r('lv')}+{$k->r('ev')}", ['total' => 'sum', 'bold' => true]);
         $g->blank();
 
@@ -165,32 +243,166 @@ final class SalesSheet
         $g->line('consT', $x->t('sales.consT'), fn (K $k) => $m->rms === [] ? '0' : 'SUM('.$k->c.$g->rowOf('cons0').':'.$k->c.$g->rowOf('cons'.(count($m->rms) - 1)).')', ['total' => 'sum', 'bold' => true]);
         $g->blank();
 
-        // collection statements
-        foreach (['l' => 'local', 'e' => 'export'] as $s => $kind) {
-            self::collection($x, $g, $s, $kind);
+        // collection statements: the product's own terms for what has no terms of its own, then one statement for each channel / market that has its own
+        $own = [];
+        foreach ($chs as $i => $row) {
+            if (! empty($row['uses_own_terms'])) {
+                $own[] = ['p' => 'lc'.$i, 'base' => 'cv'.$i, 'pol' => 'pC'.$i, 'name' => (string) $row['name'], 'local' => true];
+            }
         }
+        foreach ($mks as $j => $row) {
+            if (! empty($row['uses_own_terms'])) {
+                $own[] = ['p' => 'mc'.$j, 'base' => 'mv'.$j, 'pol' => 'pC'.(count($chs) + $j), 'name' => (string) $row['name'], 'local' => false];
+            }
+        }
+        foreach (['l' => 'local', 'e' => 'export'] as $s => $kind) {
+            $base = $s === 'l' ? 'lv' : 'ev';
+            if ($own !== []) {
+                // what is left for the product's terms: the channels (markets) without terms of their own
+                $rows = $s === 'l' ? $chs : $mks;
+                $prefix = $s === 'l' ? 'cv' : 'mv';
+                $left = [];
+                foreach ($rows as $n => $row) {
+                    if (empty($row['uses_own_terms'])) {
+                        $left[] = $prefix.$n;
+                    }
+                }
+                $g->section($x->t('sales.col'.ucfirst($kind)));
+                $g->monthHeader();
+                $base = $base.'D';
+                $g->plan([$base]);
+                $g->line($base, $x->t($s === 'l' ? 'sales.cDefLocal' : 'sales.cDefExport'), fn (K $k) => $left === [] ? '0' : implode('+', array_map(fn ($key) => $k->r($key), $left)), ['total' => 'sum']);
+                self::collection($x, $g, $s, $kind, $base, false);
+            } else {
+                self::collection($x, $g, $s, $kind, $base);
+            }
+        }
+        foreach ($own as $o) {
+            $g->section($x->t('sales.colSeg', $o['name']));
+            $g->monthHeader();
+            Streams::build($x, $g, $o['p'].'_', $o['base'], $o['local'] ? $g->lcell('vat') : '0', $o['local'] ? $g->lcell('wh') : '0', $g->key.'.'.$o['pol'].'F', $g->key.'.'.$o['pol'].'L', self::STREAM_LABELS);
+            $g->blank();
+        }
+
+        $local = array_merge(['l_'], array_map(fn ($o) => $o['p'].'_', array_filter($own, fn ($o) => $o['local'])));
+        $export = array_merge(['e_'], array_map(fn ($o) => $o['p'].'_', array_filter($own, fn ($o) => ! $o['local'])));
+        $addUp = fn (K $k, array $prefixes, string $suffix) => implode('+', array_map(fn ($p) => $k->r($p.$suffix), $prefixes));
         $g->section($x->t('sales.colTotal'));
         $g->monthHeader();
         $g->plan(['c_vat', 'c_wh', 'c_pay', 'c_end']);
-        $g->line('c_vat', $x->t('sales.cVat'), fn (K $k) => $k->r('l_vat'), ['total' => 'sum']);
-        $g->line('c_wh', $x->t('sales.cWh'), fn (K $k) => $k->r('l_cwh'), ['total' => 'sum']);
-        $g->line('c_pay', $x->t('sales.cPay'), fn (K $k) => "{$k->r('l_net')}+{$k->r('e_net')}", ['total' => 'sum', 'bold' => true]);
-        $g->line('c_end', $x->t('sales.cEnd'), fn (K $k) => "{$k->r('l_end')}+{$k->r('e_end')}", ['bold' => true]);
+        $g->line('c_vat', $x->t('sales.cVat'), fn (K $k) => $addUp($k, $local, 'vat'), ['total' => 'sum']);
+        $g->line('c_wh', $x->t('sales.cWh'), fn (K $k) => $addUp($k, $local, 'cwh'), ['total' => 'sum']);
+        $g->line('c_pay', $x->t('sales.cPay'), fn (K $k) => $addUp($k, array_merge($local, $export), 'net'), ['total' => 'sum', 'bold' => true]);
+        $g->line('c_end', $x->t('sales.cEnd'), fn (K $k) => $addUp($k, array_merge($local, $export), 'end'), ['bold' => true]);
 
         $sh->freeze(4, Ctx::FIRST);
         unset($sell);
     }
 
-    private static function collection(Ctx $x, Grid $g, string $s, string $kind): void
+    /** Label keys of the rows of a collection statement. */
+    private const STREAM_LABELS = [
+        'base' => 'sales.cBase', 'vat' => 'sales.cVatRow', 'wh' => 'sales.cWhRow', 'av' => 'sales.cAv', 'avF' => 'sales.cAvF', 'avL' => 'sales.cAvL', 'whF' => 'sales.cWhF', 'whL' => 'sales.cWhL',
+        'cav' => 'sales.cCav', 'cwh' => 'sales.cCwh', 'net' => 'sales.cNet', 'beg' => 'sales.cBeg', 'due' => 'sales.cDue', 'end' => 'sales.cEnd',
+    ];
+
+    private static function collection(Ctx $x, Grid $g, string $s, string $kind, ?string $base = null, bool $heading = true): void
     {
         $vat = $s === 'l' ? $g->lcell('vat') : '0';
         $wh = $s === 'l' ? $g->lcell('wh') : '0';
-        $g->section($x->t('sales.col'.ucfirst($kind)));
-        $g->monthHeader();
-        Streams::build($x, $g, $s.'_', $s === 'l' ? 'lv' : 'ev', $vat, $wh, $g->key.'.'.($s === 'l' ? 'pLF' : 'pEF'), $g->key.'.'.($s === 'l' ? 'pLL' : 'pEL'), [
-            'base' => 'sales.cBase', 'vat' => 'sales.cVatRow', 'wh' => 'sales.cWhRow', 'av' => 'sales.cAv', 'avF' => 'sales.cAvF', 'avL' => 'sales.cAvL', 'whF' => 'sales.cWhF', 'whL' => 'sales.cWhL',
-            'cav' => 'sales.cCav', 'cwh' => 'sales.cCwh', 'net' => 'sales.cNet', 'beg' => 'sales.cBeg', 'due' => 'sales.cDue', 'end' => 'sales.cEnd',
-        ]);
+        if ($heading) {
+            $g->section($x->t('sales.col'.ucfirst($kind)));
+            $g->monthHeader();
+        }
+        Streams::build($x, $g, $s.'_', $base ?? ($s === 'l' ? 'lv' : 'ev'), $vat, $wh, $g->key.'.'.($s === 'l' ? 'pLF' : 'pEF'), $g->key.'.'.($s === 'l' ? 'pLL' : 'pEL'), self::STREAM_LABELS);
+        $g->blank();
+    }
+
+    /**
+     * The yearly part of the channels and markets: the shares and price differences (inputs), the first foreign price and its growth (inputs),
+     * the exchange rates (from the Exchange rates sheet), and what they give for each year. Same rules as SegmentCalculator.
+     *
+     * @param  list<array<string,mixed>>  $chs
+     * @param  list<array<string,mixed>>  $mks
+     */
+    private static function segmentsYearly(Ctx $x, Grid $g, array $pr, array $chs, array $mks): void
+    {
+        $m = $x->m;
+        $rowOf = fn (string $key) => $g->rowOf($key);
+
+        if ($chs !== []) {
+            $g->section($x->t('sales.segChannels'));
+            $g->yearHeader('yhc');
+            foreach ($chs as $i => $row) {
+                $name = (string) ($row['name'] ?? '');
+                $g->yearInput('chs'.$i, $x->t('sales.segShare', $name), $m->yearly($row['allocation_percentages'] ?? []), 'in_pct', $x->t('sales.segShareNote'));
+                $g->yearInput('chd'.$i, $x->t('sales.segDiff', $name), $m->yearly($row['price_differences'] ?? []), 'in_pct', $x->t('sales.segDiffNote'));
+                $g->yearCalc('chq'.$i, $x->t('sales.segQty', $name), fn ($y, $c) => "{$c}{$rowOf('ylq')}*{$c}{$rowOf('chs'.$i)}/100", 'num');
+                $g->yearCalc('chp'.$i, $x->t('sales.segPrice', $name), fn ($y, $c) => "{$c}{$rowOf('lp')}*(1+{$c}{$rowOf('chd'.$i)}/100)", 'num2');
+            }
+            $g->blank();
+        }
+
+        if ($mks !== []) {
+            $g->section($x->t('sales.segMarkets'));
+            $real = array_filter($mks, fn ($r) => empty($r['implicit']));
+            if ($real !== []) {
+                $g->scalar('sellY', $x->t('sales.segSellY'), 'MAX(0,YEAR('.$g->lcell('sell').')-YEAR(Z_Start))', 'lock_int', $x->t('sales.segSellYNote'), true);
+            }
+            foreach ($real as $j => $row) {
+                $cur = ModelData::currencyName((string) ($row['currency'] ?? ''));
+                $g->scalar('mkf'.$j, $x->t('sales.segFirst', (string) $row['name'], $cur), (float) ($row['first_foreign_price'] ?? 0), 'in_num', $x->t('sales.segFirstNote'));
+            }
+            $g->yearHeader('yhm');
+            $last = $m->Y - 1;
+            foreach ($mks as $j => $row) {
+                $name = (string) ($row['name'] ?? '');
+                if (! empty($row['implicit'])) {
+                    $g->yearCalc('mkq'.$j, $x->t('sales.segQty', $name), fn ($y, $c) => "{$c}{$rowOf('yeq')}", 'num');
+                    $g->yearCalc('mkx'.$j, $x->t('sales.segXPrice', $name), fn ($y, $c) => "{$c}{$rowOf('ep')}", 'num2');
+
+                    continue;
+                }
+                $cur = ModelData::currencyName((string) ($row['currency'] ?? ''));
+                $fxKey = 'fx.'.($row['currency'] ?? '');
+                $g->yearInput('mks'.$j, $x->t('sales.segShareM', $name), $m->yearly($row['allocation_percentages'] ?? []), 'in_pct', $x->t('sales.segShareNote'));
+                $g->yearInput('mkg'.$j, $x->t('sales.segGrowth', $name), $m->yearly($row['foreign_growth_rates'] ?? []), 'in_pct', $x->t('sales.segGrowthNote'));
+                $g->yearCalc('mkq'.$j, $x->t('sales.segQty', $name), fn ($y, $c) => "{$c}{$rowOf('yeq')}*{$c}{$rowOf('mks'.$j)}/100", 'num');
+                // the first selling year carries the typed price, each later year grows from the year before (2 decimals); the extra year repeats the last
+                $g->yearCalc('mkp'.$j, $x->t('sales.segForeign', $name, $cur), function ($y, $c, $p) use ($g, $j, $last, $rowOf) {
+                    $self = $rowOf('mkp'.$j);
+                    if ($y === $last && $y > 0) {
+                        return $p.$self;
+                    }
+                    $grown = $y === 0 ? '0' : "ROUND($p$self*(1+$c{$rowOf('mkg'.$j)}/100),2)";
+
+                    return "IF($y<{$g->lcell('sellY')},0,IF($y={$g->lcell('sellY')},{$g->lcell('mkf'.$j)},$grown))";
+                }, 'num2');
+                $g->yearCalc('mkx'.$j, $x->t('sales.segXPrice', $name), fn ($y, $c) => "{$c}{$rowOf('mkp'.$j)}*".(isset($x->rows[$fxKey]) ? $x->x($fxKey, $c) : '0'), 'num2');
+            }
+            $g->blank();
+        }
+
+        // totals of the year and the average price that feeds the raw materials
+        $sum = fn (string $prefix, array $rows, string $c) => $rows === [] ? '0' : implode('+', array_map(fn ($n) => $c.$g->rowOf($prefix.$n), array_keys($rows)));
+        $g->section($x->t('sales.segTotals'));
+        $g->yearHeader('yht');
+        $g->yearCalc('ylv', $x->t('sales.segLocalValue'), function ($y, $c) use ($g, $chs, $rowOf) {
+            $parts = [];
+            foreach (array_keys($chs) as $i) {
+                $parts[] = "{$c}{$rowOf('chq'.$i)}*{$c}{$rowOf('chp'.$i)}";
+            }
+
+            return $parts === [] ? '0' : implode('+', $parts);
+        }, 'num');
+        $g->yearCalc('yev', $x->t('sales.segExportValue'), function ($y, $c) use ($g, $mks, $rowOf) {
+            $parts = [];
+            foreach (array_keys($mks) as $j) {
+                $parts[] = "{$c}{$rowOf('mkq'.$j)}*{$c}{$rowOf('mkx'.$j)}";
+            }
+
+            return $parts === [] ? '0' : implode('+', $parts);
+        }, 'num');
+        $g->yearCalc('yup', $x->t('sales.up'), fn ($y, $c) => "IF(({$sum('chq', $chs, $c)})+({$sum('mkq', $mks, $c)})>0,({$c}{$rowOf('ylv')}+{$c}{$rowOf('yev')})/(({$sum('chq', $chs, $c)})+({$sum('mkq', $mks, $c)})),0)", 'num2', $x->t('sales.upNote'));
         $g->blank();
     }
 }

@@ -2,10 +2,14 @@
 
 namespace App\Services;
 
+use App\Models\ExportMarket;
 use App\Models\Expense;
+use App\Models\FxRate;
 use App\Models\Product;
 use App\Models\Project;
+use App\Models\ProductSegment;
 use App\Models\RawMaterial;
+use App\Models\SalesChannel;
 use App\Models\Seasonality;
 use App\Models\User;
 use App\Support\StudyCalendar;
@@ -50,6 +54,8 @@ class ProjectService
         'long_term_loan_opening_balances'      => [],
         'product_raw_material'                 => ['product_id' => 'products', 'raw_material_id' => 'raw_materials'],
         'product_expense_allocations'          => ['product_id' => 'products'],
+        'fx_rates'                             => [],
+        'product_segments'                     => ['product_id' => 'products', 'sales_channel_id' => 'sales_channels', 'export_market_id' => 'export_markets'],
         'loan_schedule_payments'               => ['fixed_asset_id' => 'fixed_assets'],
         'sensitivity_loan_schedule_payments'   => ['fixed_asset_id' => 'fixed_assets'],
         'sensitivities'                        => [],
@@ -104,6 +110,11 @@ class ProjectService
                 'operation_dates'          => $calendar['operation_dates'],
             ])->save();
 
+            if (array_key_exists('has_export_sales', $data)) {
+                $project->has_export_sales = (bool) $data['has_export_sales'];
+                $project->save();
+            }
+
             if ($project->new_company) {
                 foreach (self::OPENING_BALANCE_TABLES as $table) {
                     DB::table($table)->where('project_id', $project->id)->delete();
@@ -112,6 +123,7 @@ class ProjectService
 
             $this->syncProducts($project, $data['products'], $calendar['extended_study_dates']);
             $this->syncRawMaterials($project, $data['rawMaterials']);
+            $this->syncSales($project, $data, StudyCalendar::yearCount($data['start_date'], (int) $data['duration']));
 
             return $project->refresh();
         });
@@ -130,6 +142,7 @@ class ProjectService
     {
         return DB::transaction(function () use ($project, $name, $owner) {
             $copy = $project->replicate(['deleted_at']);
+            $copy->setRelations([]);   // replicate() carries the loaded lists (channels, shares ...) of the original: the copy must read its own
             $copy->user_id = $owner->id;
             $copy->company_id = $project->company_id;
             $copy->name = $name;
@@ -137,7 +150,7 @@ class ProjectService
             $copy->save();
 
             $maps = [];
-            foreach (['products', 'raw_materials', 'fixed_assets'] as $table) {
+            foreach (['products', 'raw_materials', 'fixed_assets', 'sales_channels', 'export_markets'] as $table) {
                 $maps[$table] = $this->copyRows($table, $project->id, $copy->id, [], [], $table === 'fixed_assets'
                     ? fn (array $row) => $this->remapKeyedColumns($row, ['product_allocations', 'monthly_product_allocations'], $maps['products'])
                     : null);
@@ -232,6 +245,96 @@ class ProjectService
                 $expense->update(['products' => $ids]);
             }
         }
+    }
+
+    /**
+     * The sales-channels-and-export card of the study form: channels, export markets and the FX forecast.
+     * A list that the form did not send is left as it is. Rates are kept per study year (year index 0 = the start year).
+     *
+     * @param  array<string, mixed>  $data
+     */
+    private function syncSales(Project $project, array $data, int $yearCount): void
+    {
+        if (array_key_exists('sales_channels', $data)) {
+            $this->syncNamedRows($project->salesChannels()->get(), $data['sales_channels'] ?? [], fn (array $row) => ['name' => $row['name']], SalesChannel::class, $project);
+        }
+
+        if (array_key_exists('export_markets', $data)) {
+            $this->syncNamedRows($project->exportMarkets()->get(), $data['export_markets'] ?? [], fn (array $row) => ['name' => $row['name'], 'currency' => $row['currency']], ExportMarket::class, $project);
+        }
+
+        if (array_key_exists('fx_rates', $data)) {
+            $kept = [];
+            foreach (array_values($data['fx_rates'] ?? []) as $row) {
+                $rates = [];
+                for ($year = 0; $year < $yearCount; $year++) {
+                    $rates[$year] = (float) ($row['rates'][$year] ?? 0);
+                }
+                FxRate::updateOrCreate(['project_id' => $project->id, 'currency' => $row['currency']], ['rates' => $rates]);
+                $kept[] = $row['currency'];
+            }
+            FxRate::where('project_id', $project->id)->whereNotIn('currency', $kept)->delete();
+        }
+
+        // R1.6: the user confirmed switching export off, so every product keeps only its local quantity.
+        if (array_key_exists('has_export_sales', $data) && ! $data['has_export_sales'] && ! empty($data['clear_export'])) {
+            $this->clearExport($project);
+        }
+    }
+
+    /**
+     * Creates, renames and removes the rows of a list typed by name (channels or markets), keeping the typed order.
+     * The request has already refused removing a row that a product uses.
+     *
+     * @param  \Illuminate\Support\Collection<int, \Illuminate\Database\Eloquent\Model>  $existing
+     * @param  list<array<string, mixed>>  $rows
+     * @param  class-string  $model
+     */
+    private function syncNamedRows($existing, array $rows, callable $values, string $model, Project $project): void
+    {
+        $rows = array_values($rows);
+        $keptIds = collect($rows)->pluck('id')->filter()->map(fn ($id) => (int) $id)->all();
+
+        // 1. Rows that are no longer in the list go first, so a new row may reuse the name of a removed one.
+        $model::where('project_id', $project->id)->whereNotIn('id', $keptIds)->delete();
+
+        // 2. Names are unique inside the study: park the kept rows under temporary names so that two rows can swap names.
+        $current = $existing->whereIn('id', $keptIds);
+        foreach ($current as $row) {
+            $row->update(['name' => '~'.$row->id]);
+        }
+
+        // 3. Write the typed names and order, and create the new rows.
+        foreach ($rows as $position => $row) {
+            $attributes = $values($row) + ['position' => $position];
+            $match = ! empty($row['id']) ? $current->firstWhere('id', (int) $row['id']) : null;
+
+            $match ? $match->update($attributes) : $model::create($attributes + ['project_id' => $project->id]);
+        }
+    }
+
+    /** Every product of the study sells locally only: the local share becomes 100 %, the export quantity 0, and its export allocations go. */
+    private function clearExport(Project $project): void
+    {
+        foreach ($project->products()->get() as $product) {
+            $local = (array) $product->local_target_quantity_percentages;
+            $target = (array) $product->target_quantities;
+            $localPrices = (array) $product->local_price_per_unit;
+            $values = [];
+            foreach ($target as $year => $quantity) {
+                $values[$year] = (float) $quantity * (float) ($localPrices[$year] ?? 0);
+            }
+
+            $product->update([
+                'local_target_quantity_percentages'  => array_map(fn () => 100.0, $local),
+                'local_target_quantities'            => $target,
+                'export_target_quantity_percentages' => array_map(fn () => 0.0, $local),
+                'export_target_quantities'           => array_map(fn () => 0.0, $target),
+                'sales_target_values'                => $values,
+            ]);
+        }
+
+        ProductSegment::where('project_id', $project->id)->where('kind', ProductSegment::EXPORT)->delete();
     }
 
     /** @param list<array<string, mixed>> $rows */

@@ -93,6 +93,11 @@ class DemoSeederTest extends TestCase
             $this->assertGreaterThan(0, $props['dashboard']['kpi']['irr'], "$name IRR");
             $this->assertGreaterThan(0, $props['dashboard']['kpi']['npv'], "$name NPV");
             $this->assertCount(5, $props['dashboard']['revenue']['value']);
+            // the sales are also shown by channel and by market
+            $this->assertNotEmpty($props['dashboard']['sales_breakdown']['local'], "$name has no local channels on the dashboard");
+            $this->assertNotEmpty($props['dashboard']['sales_breakdown']['export'], "$name has no export markets on the dashboard");
+            $this->assertCount(5, $props['dashboard']['sales_breakdown']['local'][0]['values']);
+            $this->assertGreaterThan(0, array_sum($props['dashboard']['sales_breakdown']['local'][0]['values']));
         }
     }
 
@@ -159,6 +164,14 @@ class DemoSeederTest extends TestCase
             }
         }
 
+        // The channels, markets, exchange rates, own collection terms and the results by channel and market are all in the report.
+        $titles = fn (array $sections) => collect($sections[0]['blocks'])->map(fn ($b) => $b['title']['k'] ?? null)->filter()->all();
+        foreach ([$new, $existing] as $study) {
+            foreach (['products.segments.reportFx', 'products.segments.reportChannels', 'products.segments.reportMarkets', 'products.segments.reportResults'] as $key) {
+                $this->assertContains($key, $titles($study), $key);
+            }
+        }
+
         // Four products' worth of detail for the new company: its first product block names the product.
         $this->assertSame(4, collect($new[0]['blocks'])->filter(fn ($b) => isset($b['title']['text']))->count());
     }
@@ -172,4 +185,32 @@ class DemoSeederTest extends TestCase
         $this->assertSame(1, Project::where('name', DemoSeeder::STUDY_NEW)->count());
         $this->assertSame(1, Project::where('name', DemoSeeder::STUDY_EXISTING)->count());
     }
+
+    public function test_both_studies_use_sales_channels_export_markets_and_exchange_rates(): void
+    {
+        $this->seed(DemoSeeder::class);
+
+        foreach ([DemoSeeder::STUDY_NEW => [3, 3], DemoSeeder::STUDY_EXISTING => [2, 2]] as $name => [$channels, $markets]) {
+            $project = $this->study($name);
+
+            $this->assertTrue((bool) $project->has_export_sales, $name);
+            $this->assertSame($channels, $project->salesChannels()->count(), "$name channels");
+            $this->assertSame($markets, $project->exportMarkets()->count(), "$name markets");
+            $this->assertGreaterThan(0, $project->fxRates()->count(), "$name rates");
+
+            foreach ($project->products()->with('exportSeasonality')->get() as $product) {
+                $local = $product->segments()->where('kind', 'local')->get();
+                $export = $product->segments()->where('kind', 'export')->get();
+
+                $this->assertCount($channels, $local, "$name {$product->name} channels");
+                $this->assertCount($markets, $export, "$name {$product->name} markets");
+                $this->assertEqualsWithDelta(100.0, $local->sum(fn ($s) => (float) $s->allocation_percentages[0]), 0.001);
+                $this->assertEqualsWithDelta(100.0, $export->sum(fn ($s) => (float) $s->allocation_percentages[0]), 0.001);
+                $this->assertGreaterThan(0, array_sum((array) $local->first()->monthly_values), "$name {$product->name} was calculated by channel");
+                $this->assertTrue($local->contains(fn ($s) => $s->uses_own_terms), "$name {$product->name} has a channel with its own terms");
+                $this->assertNotNull($product->exportSeasonality);
+            }
+        }
+    }
+
 }

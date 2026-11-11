@@ -23,6 +23,11 @@ return [
         'duplicateDays'   => 'Each payment day can be used once.',
         'installmentTotal' => 'Reservation and contractual payment together cannot exceed 100%.',
         'graceTooLong'    => 'The grace period is too long for the tenor: the first instalment must fall inside it.',
+        'endRequired'     => 'Please choose the end month.',
+        'deliveryRequired' => 'Please choose the delivery month.',
+        'datesOrder'      => 'The delivery month cannot be before the purchase month or after the month the asset is ready.',
+        'milestoneTotal'  => 'The milestone payments must add up to 100%.',
+        'milestoneNotMachine' => 'Payment by milestones is only for machines.',
     ],
 
     // Names used inside automatic messages ("The :attribute must be a number").
@@ -44,6 +49,10 @@ return [
         'rows.*.amount'               => 'amount',
         'rows.*.start'                => 'start month',
         'rows.*.end'                  => 'end month',
+        'rows.*.delivery'             => 'delivery month',
+        'rows.*.asset_type'           => 'kind of asset',
+        'rows.*.execution_curve'      => 'spending curve',
+        'rows.*.milestones'           => 'milestone payments',
         'rows.*.increase_rate'        => 'yearly increase',
         'rows.*.monthly_percentage'   => 'percentage of sales',
         'rows.*.monthly_cost_of_unit' => 'cost per unit',

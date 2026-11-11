@@ -27,6 +27,7 @@ class Sensitivity extends Model
             'rm_product_third'      => 'decimal:2',
             'rm_product_fourth'     => 'decimal:2',
             'rm_product_fifth'      => 'decimal:2',
+            'fx_rate_change'        => 'decimal:2',
         ];
     }
 

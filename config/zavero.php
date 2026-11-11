@@ -34,6 +34,10 @@ return [
         // Kept exactly as the previous ZAVERO stored them ('litter' is the old spelling of liter), so old data fits.
         'measurement_units' => ['ton', 'kg', 'gram', 'litter', 'milliliter', 'carton', 'box', 'piece', 'each', 'barrel', 'bottle', 'others'],
         'rm_coverage_days'  => [0, 15, 30, 45, 60, 75, 90, 120, 150, 180],
+        // Sales channels and export (D7). The study currency itself can never be a foreign currency.
+        'max_channels'            => 8,
+        'max_markets'             => 10,
+        'max_foreign_currencies'  => 6,
     ],
 
 ];

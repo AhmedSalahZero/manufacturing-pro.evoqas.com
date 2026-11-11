@@ -18,7 +18,7 @@ Every save recalculates the whole study (`SalesCalculationService::recalculate`,
 * Employer cost = net salary x headcount / (1 - (income tax % + social insurance %)).
 * Income tax + insurance = employer cost x (tax % + insurance %), paid one month later.
 * A new company starts with 0 people today.
-* **Direct labour** and **manufacturing overheads** staff cost is given to the products, either by their sales each month, or by typed percentages (adding up to 100) shared out each month only between the products that have started selling. Overheads staff are also listed as "indirect manpower" of each product.
+* **Direct labour** and **manufacturing overheads** staff cost is given to the products, either by their sales each month, or by typed percentages (adding up to 100) shared out each month only between the products that are making or selling in that month (see COST_SHARING.md). Overheads staff are also listed as "indirect manpower" of each product.
 
 ## Expense rules
 

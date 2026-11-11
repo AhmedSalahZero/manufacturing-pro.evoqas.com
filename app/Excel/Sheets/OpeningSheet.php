@@ -130,11 +130,16 @@ final class OpeningSheet
                 $g->line($p.'p'.$i, $x->t('ob.toProduct', (string) ($pr['name'] ?? '')), function (K $kk) use ($x, $p, $i, $first, $last, $yes, $L) {
                     $range = fn (string $c) => '$'.$c.'$'.$first.':$'.$c.'$'.$last;
                     $row = $first + $i;
-                    $typed = ShareSheet::typed($kk, '$E$'.$row, '$G$'.$row, $range('E'), $range('G'));
+                    $typed = ShareSheet::typed($kk, '$E$'.$row, $range('E'), $i);
 
                     return 'IF('.$L('rev').'="'.$yes.'",'.$x->x('share.rs'.$i, $kk->c).",$typed)*".$kk->r($p.'mf');
                 }, ['total' => 'sum']);
             }
+            $g->line($p.'un', $x->t('ob.unalloc'), function (K $kk) use ($m, $p) {
+                $rows = array_map(fn ($i) => $kk->r($p.'p'.$i), array_keys($m->products));
+
+                return ShareSheet::left($kk->r($p.'mf'), $rows === [] ? '0' : implode('+', $rows));
+            }, ['total' => 'sum', 'bold' => true]);
         }
         $g->blank();
 
@@ -167,6 +172,7 @@ final class OpeningSheet
             };
         };
         $tot('t_adm', $x->t('ob.t.adm'), $aSum('adm'));
+        $tot('t_un', $x->t('ob.t.unalloc'), $aSum('un'));
         $tot('t_nbv', $x->t('ob.t.nbv'), $aSum('nbv'), false);
         foreach ($m->products as $i => $pr) {
             $tot('t_p'.$i, $x->t('ob.t.toProduct', (string) ($pr['name'] ?? '')), $aSum('p'.$i));

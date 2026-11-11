@@ -84,11 +84,191 @@ class FixedAssetsAndLoansTest extends TestCase
         $this->assertEqualsWithDelta(1200, array_sum($r['payments']), self::DELTA);
     }
 
+    public function test_customised_payments_all_from_the_total_add_up_to_the_total_price(): void
+    {
+        // Bought over 3 months (400 + 400 + 400); 40 % at once, 60 % 60 days later - all taken from the total price.
+        $paid = FixedAssetCalculator::contractPayments([2 => 400.0, 3 => 400.0, 4 => 400.0], 1200.0, [0 => 40, 60 => 60], [0 => true, 60 => true]);
+
+        $this->assertEqualsWithDelta(480, $paid[2], self::DELTA);    // 40 % of 1200, from the first purchase month
+        $this->assertEqualsWithDelta(720, $paid[4], self::DELTA);    // 60 % of 1200, two months later
+        $this->assertEqualsWithDelta(1200, array_sum($paid), self::DELTA);
+    }
+
+    public function test_customised_payments_all_from_each_months_purchase_add_up_to_the_total_price(): void
+    {
+        $paid = FixedAssetCalculator::contractPayments([2 => 400.0, 3 => 400.0, 4 => 400.0], 1200.0, [0 => 40, 60 => 60], [0 => false, 60 => false]);
+
+        $this->assertEqualsWithDelta(160, $paid[2], self::DELTA);    // 40 % of month 2
+        $this->assertEqualsWithDelta(160, $paid[3], self::DELTA);
+        $this->assertEqualsWithDelta(160 + 240, $paid[4], self::DELTA);   // 40 % of month 4 + 60 % of month 2
+        $this->assertEqualsWithDelta(240, $paid[5], self::DELTA);
+        $this->assertEqualsWithDelta(240, $paid[6], self::DELTA);
+        $this->assertEqualsWithDelta(1200, array_sum($paid), self::DELTA);
+    }
+
     public function test_less_than_30_days_lands_in_the_same_month_and_45_days_is_two_months(): void
     {
         $paid = FixedAssetCalculator::contractPayments([3 => 100.0], 100.0, [15 => 40, 45 => 60], [15 => false, 45 => false]);
 
         $this->assertEquals([3 => 40.0, 5 => 60.0], $paid);
+    }
+
+    // ── Kinds of asset: land, construction, machine, other ──────────────────
+
+    public function test_a_construction_pays_a_down_payment_on_the_total_and_the_rest_after_each_months_work(): void
+    {
+        // A factory of 10 million built in 10 months (1 million a month): 25 % down payment on the total at the start,
+        // 50 % of each month's work 30 days later and 25 % of each month's work 60 days later.
+        $r = $this->calculate([
+            'type' => 'construction', 'count' => 1, 'amount' => 10000000, 'start' => 0, 'end' => 9, 'terms' => 'customize',
+            'policy' => [0 => 25, 30 => 50, 60 => 25], 'from_total' => [0 => true, 30 => false, 60 => false],
+        ]);
+
+        $this->assertEqualsWithDelta(2500000, $r['payments'][0], self::DELTA);      // month 1: the down payment
+        $this->assertEqualsWithDelta(500000, $r['payments'][1], self::DELTA);       // month 2: 50 % of month 1's work
+        foreach (range(2, 10) as $month) {
+            $this->assertEqualsWithDelta(750000, $r['payments'][$month], self::DELTA);   // months 3 to 11
+        }
+        $this->assertEqualsWithDelta(250000, $r['payments'][11], self::DELTA);      // month 12: the last 25 %
+        $this->assertEqualsWithDelta(10000000, array_sum($r['payments']), self::DELTA);
+    }
+
+    public function test_a_construction_can_be_spent_on_an_s_curve(): void
+    {
+        $r = $this->calculate(['type' => 'construction', 'amount' => 12000, 'start' => 0, 'end' => 11, 'curve' => 's_curve', 'terms' => 'cash']);
+        $e = $r['execution'];
+
+        $this->assertCount(12, $e);
+        $this->assertEqualsWithDelta(12000, array_sum($e), self::DELTA);                    // nothing is lost
+        $this->assertLessThan($e[5], $e[0]);                                                 // slow start, faster in the middle
+        $this->assertLessThan($e[5], $e[11]);                                                // and slow at the end
+        $this->assertEqualsWithDelta($e[0], $e[11], self::DELTA);                            // the curve is symmetric
+        $this->assertEqualsWithDelta($e[5], $e[6], self::DELTA);
+        $this->assertEqualsWithDelta(12000 * (1 - cos(M_PI / 12)) / 2, $e[0], self::DELTA);  // about 1.7 % in the first month
+
+        $flat = $this->calculate(['type' => 'construction', 'amount' => 12000, 'start' => 0, 'end' => 11, 'curve' => 'flat', 'terms' => 'cash']);
+        $this->assertEqualsWithDelta(1000, $flat['execution'][0], self::DELTA);              // flat stays equal parts
+    }
+
+    public function test_land_is_bought_in_one_month_and_never_depreciated(): void
+    {
+        // The end month and the depreciation years are ignored for land.
+        $r = $this->calculate(['type' => 'land', 'amount' => 5000, 'start' => 3, 'end' => 8, 'depreciation_years' => 10, 'replacement_rate' => 5, 'terms' => 'cash']);
+
+        $this->assertEquals([3 => 5000.0], $r['execution']);
+        $this->assertSame([], $r['depreciation']['total_monthly_depreciation']);
+        $this->assertSame([], $r['manufacturing_depreciation']);
+        $this->assertEqualsWithDelta(5000, $r['transferred_amount'], self::DELTA);
+    }
+
+    public function test_other_assets_are_bought_in_one_month_and_depreciated(): void
+    {
+        $r = $this->calculate(['type' => 'other', 'amount' => 1200, 'start' => 3, 'end' => 9, 'depreciation_years' => 1, 'terms' => 'cash']);
+
+        $this->assertEquals([3 => 1200.0], $r['execution']);
+        $this->assertEqualsWithDelta(100, $r['depreciation']['total_monthly_depreciation'][4], self::DELTA);   // from the month after
+        $this->assertEqualsWithDelta(1200, array_sum($r['depreciation']['total_monthly_depreciation']), self::DELTA);
+    }
+
+    /** The production line: bought in January 2027, delivered in July, ready in September; 50 % at the order, 30 % at delivery, 20 % when ready. */
+    private function productionLine(array $over = []): array
+    {
+        return $this->calculate(array_merge([
+            'type' => 'machine', 'amount' => 1000, 'start' => 12, 'delivery' => 18, 'end' => 20, 'depreciation_years' => 1, 'terms' => 'milestone',
+            'milestones' => ['purchase' => ['rate' => 50, 'days' => 0], 'delivery' => ['rate' => 30, 'days' => 0], 'ready' => ['rate' => 20, 'days' => 0]],
+        ], $over));
+    }
+
+    public function test_a_machine_is_paid_at_the_order_the_delivery_and_when_it_is_ready(): void
+    {
+        $r = $this->productionLine();
+
+        $this->assertEqualsWithDelta(500, $r['payments'][12], self::DELTA);
+        $this->assertEqualsWithDelta(300, $r['payments'][18], self::DELTA);
+        $this->assertEqualsWithDelta(200, $r['payments'][20], self::DELTA);
+        $this->assertCount(3, $r['payments']);
+        $this->assertEqualsWithDelta(1000, array_sum($r['payments']), self::DELTA);
+    }
+
+    public function test_the_advance_is_spent_when_paid_and_the_rest_when_the_machine_is_delivered(): void
+    {
+        $r = $this->productionLine();
+
+        $this->assertEqualsWithDelta(500, $r['execution'][12], self::DELTA);
+        $this->assertEqualsWithDelta(500, $r['execution'][18], self::DELTA);
+        $this->assertEqualsWithDelta(1000, array_sum($r['execution']), self::DELTA);
+
+        // Nothing is owed before the delivery, 200 is owed from the delivery until the last milestone is paid.
+        $this->assertEqualsWithDelta(0, $r['payable'][12], self::DELTA);
+        $this->assertEqualsWithDelta(0, $r['payable'][17], self::DELTA);
+        $this->assertEqualsWithDelta(200, $r['payable'][18], self::DELTA);
+        $this->assertEqualsWithDelta(200, $r['payable'][19], self::DELTA);
+        $this->assertEqualsWithDelta(0, $r['payable'][20], self::DELTA);
+        foreach ($r['payable'] as $owed) {
+            $this->assertGreaterThanOrEqual(-self::DELTA, $owed);   // never a negative creditor
+        }
+    }
+
+    public function test_a_machine_is_transferred_and_depreciated_only_after_it_is_ready(): void
+    {
+        $r = $this->productionLine();
+
+        // Ready in month 20: transferred the month after, depreciated from the month after that (the same rule as a construction).
+        $this->assertSame(21, $r['transfer_index']);
+        $this->assertEqualsWithDelta(1000, $r['transferred_amount'], self::DELTA);
+        $this->assertEqualsWithDelta(1000, $r['under_progress']['end_balance'][20], self::DELTA);   // still being installed and tested
+        $this->assertEqualsWithDelta(0, $r['under_progress']['end_balance'][21], self::DELTA);
+        $months = array_keys($r['depreciation']['total_monthly_depreciation']);
+        $this->assertSame(22, min($months));
+    }
+
+    public function test_the_loan_interest_of_a_machine_is_added_to_its_cost_until_it_is_ready(): void
+    {
+        $r = $this->productionLine(['equity_rate' => 0, 'interest_rate' => 12, 'tenor' => 24, 'loan_grace' => 12]);
+
+        $this->assertGreaterThan(1000, $r['transferred_amount']);
+        $this->assertSame(21, $r['transfer_index']);
+        foreach ($r['under_progress']['capitalized_interest'] as $month => $interest) {
+            if ($month > 20) {
+                $this->assertEqualsWithDelta(0, $interest, self::DELTA);   // no more interest is capitalised once it is ready
+            }
+        }
+        $this->assertGreaterThan(0, array_sum($r['under_progress']['capitalized_interest']));
+    }
+
+    public function test_a_milestone_can_be_paid_some_days_later(): void
+    {
+        $r = $this->productionLine(['milestones' => ['purchase' => ['rate' => 50, 'days' => 0], 'delivery' => ['rate' => 30, 'days' => 30], 'ready' => ['rate' => 20, 'days' => 60]]]);
+
+        $this->assertEqualsWithDelta(500, $r['payments'][12], self::DELTA);
+        $this->assertEqualsWithDelta(300, $r['payments'][19], self::DELTA);   // a month after the delivery
+        $this->assertEqualsWithDelta(200, $r['payments'][22], self::DELTA);   // two months after it is ready
+    }
+
+    public function test_a_machine_paid_in_cash_is_paid_at_the_order(): void
+    {
+        $r = $this->productionLine(['terms' => 'cash']);
+
+        $this->assertEquals([12 => 1000.0], $r['payments']);
+        $this->assertEqualsWithDelta(1000, $r['execution'][12], self::DELTA);   // paid in advance, so spent when paid
+        $this->assertEqualsWithDelta(0, $r['payable'][18], self::DELTA);
+    }
+
+    public function test_a_machine_on_customised_terms_counts_its_days_from_the_purchase(): void
+    {
+        $r = $this->productionLine(['terms' => 'customize', 'policy' => [0 => 40, 60 => 60], 'from_total' => [0 => false, 60 => false]]);
+
+        $this->assertEqualsWithDelta(400, $r['payments'][12], self::DELTA);
+        $this->assertEqualsWithDelta(600, $r['payments'][14], self::DELTA);
+    }
+
+    public function test_a_machine_with_no_delay_is_transferred_in_the_month_it_is_bought(): void
+    {
+        $r = $this->calculate(['type' => 'machine', 'amount' => 1200, 'start' => 3, 'delivery' => 3, 'end' => 3, 'depreciation_years' => 1, 'terms' => 'cash']);
+
+        $this->assertSame(3, $r['transfer_index']);
+        $this->assertEquals([3 => 1200.0], $r['execution']);
+        $this->assertEqualsWithDelta(100, $r['depreciation']['total_monthly_depreciation'][4], self::DELTA);
     }
 
     public function test_instalment_payments(): void

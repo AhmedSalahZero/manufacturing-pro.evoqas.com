@@ -59,6 +59,14 @@ class FixedAssetController extends Controller
                     $custom[] = ['due_days' => '', 'rate' => '', 'from_total' => false];
                 }
 
+                $milestones = [];
+                foreach (FixedAssetService::MILESTONES as $key) {
+                    $milestones[$key] = [
+                        'rate' => (float) ($a->milestone_payments[$key]['rate'] ?? 0),
+                        'days' => (int) ($a->milestone_payments[$key]['days'] ?? 0),
+                    ];
+                }
+
                 $typed = (array) $a->product_allocations;
                 $allocations = [];
                 foreach ($project->products as $p) {
@@ -68,11 +76,15 @@ class FixedAssetController extends Controller
                 return [
                     'id'                            => $a->id,
                     'name'                          => $a->name,
+                    'asset_type'                    => $a->asset_type ?: 'construction',
+                    'execution_curve'               => $a->execution_curve ?: 'flat',
                     'counts'                        => (int) $a->counts,
                     'amount'                        => (float) $a->amount,
                     'depreciation_duration'         => (int) $a->depreciation_duration,
                     'start'                         => StudyCalendar::monthAt($dates, $a->start_date) ?? '',
+                    'delivery'                      => $a->delivery_date === null ? '' : (StudyCalendar::monthAt($dates, (int) $a->delivery_date) ?? ''),
                     'end'                           => StudyCalendar::monthAt($dates, $a->end_date) ?? '',
+                    'milestones'                    => $milestones,
                     'admin_depreciation_percentage' => (float) $a->admin_depreciation_percentage,
                     'replacement_cost_rate'         => (float) $a->replacement_cost_rate,
                     'replacement_cost_interval'     => (int) ($a->replacement_cost_interval ?: 1),
@@ -96,6 +108,8 @@ class FixedAssetController extends Controller
             'summary'  => (object) $rows->mapWithKeys(fn ($a) => [$a->id => $this->summary($a, $dates)])->all(),
             'results'  => $this->results($rows, $timeline),
             'options'  => [
+                'types'             => FixedAssetService::TYPES,
+                'curves'            => FixedAssetService::CURVES,
                 'dueDays'           => FixedAssetService::DUE_DAYS,
                 'slots'             => FixedAssetService::CUSTOM_SLOTS,
                 'loanIntervals'     => FixedAssetService::LOAN_INTERVALS,
