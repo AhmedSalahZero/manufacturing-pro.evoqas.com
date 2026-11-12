@@ -17,7 +17,7 @@ import TermsPair from '@/Components/TermsPair.vue';
 import { useI18n } from '@/lang/i18n';
 import { formatNumber } from '@/Utils/format';
 import {
-    addsUpTo100, exportPercent, exportQuantity, localQuantity, num, partValue, repriceFrom, targetQuantity, total, yearSales,
+    addsUpTo100, exportPercent, exportQuantity, localQuantity, num, partValue, repriceFrom, targetQuantity, total,
 } from '@/Utils/productPlan';
 import { exportLines, localLines } from '@/Utils/segments';
 
@@ -84,7 +84,16 @@ function segmentValue(y) {
     return [...inLocal, ...inExport].reduce((s, l) => s + l.value, 0);
 }
 const quantitiesBy = (fn) => Object.fromEntries(yearIndexes.value.map((y) => [y, fn(y)]));
-const value = (y) => (segmentsOn.value ? segmentValue(y) : yearSales(form.max_capacity[y], form.target_percentages[y], form.local_target_quantity_percentages[y], form.local_price_per_unit[y], form.export_price_per_unit[y]));
+// Local value, export value and their total (the last row of the table is the TOTAL of local and export sales).
+const localValue = (y) => (segmentsOn.value
+    ? localLines(form.segments.local, y, local(y), form.local_price_per_unit[y]).reduce((s, l) => s + l.value, 0)
+    : local(y) * num(form.local_price_per_unit[y]));
+const exportValue = (y) => (segmentsOn.value
+    ? (hasExport.value ? exportLines(form.segments.export, y, yearIndexes.value, exported(y), props.salesSettings.fx, (m) => m.currency).reduce((s, l) => s + l.value, 0) : 0)
+    : exported(y) * num(form.export_price_per_unit[y]));
+const value = (y) => localValue(y) + exportValue(y);
+// With export sales the table shows the local and the export value above the total, so the total is never read as "local only".
+const showSplit = computed(() => (segmentsOn.value ? hasExport.value : true));
 const show = (n) => formatNumber(n, 1);
 
 // A price follows the year before it (grown by the year's growth %); typing a price or a growth % updates the years after it.
@@ -165,6 +174,9 @@ function save(after) {
     form.after = after;
     form.put(route('projects.products.update', [props.project.id, props.product.id]), {
         preserveScroll: true,
+        // A form that was saved is built again from what the server sends back. Keeping the old state (the default for a save) made
+        // "Save and next" open the next product with the figures of the product that was just saved.
+        preserveState: (page) => Object.keys(page.props.errors ?? {}).length > 0,
         onError: async () => {
             await nextTick();
             document.querySelector('[aria-invalid="true"], .terms [role="alert"], [role="alert"].dng')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -272,8 +284,16 @@ const periodTitle = (stream, i) => `${t(`products.collection.${stream}`)} — ${
                                         <span v-if="err(`export_price_per_unit.${y.index}`)" class="dng small" role="alert">{{ err(`export_price_per_unit.${y.index}`) }}</span>
                                     </td>
                                 </tr>
+                                <tr v-if="showSplit">
+                                    <td>{{ t('products.sales.localValue') }}</td>
+                                    <td v-for="y in years" :key="y.index" class="num" dir="ltr">{{ formatNumber(localValue(y.index), 0) }}</td>
+                                </tr>
+                                <tr v-if="showSplit">
+                                    <td>{{ t('products.sales.exportValue') }}</td>
+                                    <td v-for="y in years" :key="y.index" class="num" dir="ltr">{{ formatNumber(exportValue(y.index), 0) }}</td>
+                                </tr>
                                 <tr>
-                                    <td><b>{{ t('products.sales.salesValue') }}</b></td>
+                                    <td><b>{{ showSplit ? t('products.sales.salesValueTotal') : t('products.sales.salesValue') }}</b></td>
                                     <td v-for="y in years" :key="y.index" class="num" dir="ltr"><b>{{ formatNumber(value(y.index), 0) }}</b></td>
                                 </tr>
                             </tbody>

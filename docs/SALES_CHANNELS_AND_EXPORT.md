@@ -141,7 +141,7 @@ Verified: a test study (`tests/Fixtures/excel/fixture6.php`: two channels, one w
 
 **Dashboard.** The Overview tab gets a "Sales by channel and market" block (local by channel, export by market) when the study has them. `DashboardService::salesBreakdown`, `DashboardView.vue`.
 
-**Demo data.** Both demo studies and Sky Healthy now use channels, markets and exchange rates (Sky Healthy: Gulf and Middle East in USD, Europe in EUR). `DemoSeeder.php`, `SkyHealthySeeder.php`.
+**Demo data.** Both demo studies and Sky Healthy now use channels, markets and exchange rates (Sky Healthy, version 2: Saudi Arabia and the UAE in USD, Germany in EUR, export from 2029; see SKY_HEALTHY_FOOD_STUDY.md). `DemoSeeder.php`, `SkyHealthySeeder.php`.
 
 | Tests | `tests/Unit/Excel/ExcelModelTest.php` (fixture 6), `tests/Feature/DemoSeederTest.php`, `tests/Feature/SkyHealthySeederTest.php`, `tests/js/dashboard.spec.js` |
 |---|---|

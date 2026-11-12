@@ -26,6 +26,17 @@ final class ManpowerSheet
         return $out;
     }
 
+    /**
+     * The name of a position. The database column is "position" (the study data the export reads); "name" is kept so older dumps still work.
+     * Reading only "name" left every position name blank in the exported workbook.
+     *
+     * @param  array<string,mixed>  $row
+     */
+    private static function staffName(array $row): string
+    {
+        return (string) ($row['position'] ?? $row['name'] ?? '');
+    }
+
     public static function build(Ctx $x): void
     {
         $m = $x->m;
@@ -52,7 +63,7 @@ final class ManpowerSheet
         $sh->set($g->row, 1, '', 0);
         foreach ($staff as $j => $row) {
             $r = $g->row;
-            $sh->set($r, 1, (string) ($row['name'] ?? ''), $x->s('in_txt'));
+            $sh->set($r, 1, self::staffName($row), $x->s('in_txt'));
             $sh->set($r, 5, $types[$row['type']] ?? $types['general'], $x->s('in_list'));
             $sh->list(Sheet::col(5).$r, array_values($types));
             $sh->set($r, 6, (float) ($row['existing_count'] ?? 0), $x->s('in_int'));
@@ -107,7 +118,7 @@ final class ManpowerSheet
         $g->section($x->t('mp.hirings'));
         $g->monthHeader();
         foreach ($staff as $j => $row) {
-            $g->inputLine('hire'.$j, (string) ($row['name'] ?? ''), array_map('floatval', ModelData::arr($row['hirings'] ?? [])), 'in_int', $x->t('mp.hireNote'));
+            $g->inputLine('hire'.$j, self::staffName($row), array_map('floatval', ModelData::arr($row['hirings'] ?? [])), 'in_int', $x->t('mp.hireNote'));
         }
         $g->blank();
 
@@ -119,7 +130,7 @@ final class ManpowerSheet
         $levy = '((Z_SalTax+Z_SocIns)/100)';
         $g->plan($keys);
         foreach ($staff as $j => $row) {
-            $g->section($x->t('mp.block', $j + 1, (string) ($row['name'] ?? '')));
+            $g->section($x->t('mp.block', $j + 1, self::staffName($row)));
             $g->monthHeader();
             $g->line('n'.$j, $x->t('mp.count'), fn (K $k) => "IF({$k->cal('idx')}>Z_ExtEnd,0,{$k->pr('n'.$j)}+{$k->cal('op')}*N({$k->r('hire'.$j)}))", ['before' => 'IF(Z_NewCo=1,0,'.$x->name('mp.p'.$j.'.existing').')', 'bold' => true]);
             $g->line('sal'.$j, $x->t('mp.salary'), fn (K $k) => $x->name('mp.p'.$j.'.salary')."*(1+Z_SalInc/100)^INT({$k->cal('oppos')}/12)", ['style' => 'num2']);

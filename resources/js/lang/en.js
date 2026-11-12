@@ -338,6 +338,9 @@ export default {
             exportGrowth: 'Export price growth %',
             exportPrice: 'Export price per unit',
             salesValue: 'Target sales value',
+            localValue: 'Local sales value',
+            exportValue: 'Export sales value',
+            salesValueTotal: 'Target sales value (local + export)',
             derivedNote: 'A price follows the year before it grown by the growth %. You can also type a price yourself; the years after it follow.',
         },
         season: {

@@ -233,4 +233,22 @@ class ExcelModelTest extends TestCase
 
         $this->assertMatchesRegularExpression('/\p{Arabic}/u', $cover);
     }
+
+    /** The bug: staff rows of a real study have the column "position", not "name", so every position name came out blank in the workbook. */
+    public function test_the_position_names_of_a_real_study_reach_the_workbook(): void
+    {
+        $data = $this->fixture(1);
+        foreach ($data['manpowers'] as $i => $row) {
+            $data['manpowers'][$i]['position'] = $row['name'];   // the shape the database gives
+            unset($data['manpowers'][$i]['name']);
+        }
+
+        $parts = $this->parts(ModelBuilder::build($data, 'en')->wb->toString());
+        $all = html_entity_decode(implode("\n", $parts), ENT_QUOTES | ENT_XML1);
+
+        foreach (['Operators', 'Supervisors', 'Sales reps', 'Managers'] as $position) {
+            $this->assertStringContainsString($position, $all, $position);
+        }
+        $this->assertStringContainsString('Position 1 - Operators', $all, 'the block title carries the name');
+    }
 }

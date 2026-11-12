@@ -10,7 +10,7 @@ vi.mock('@inertiajs/vue3', async () => {
         router: { post() {}, on() {} },
         usePage: () => ({ props: { auth: { user: { role: 'company_admin', name: 'Mona Ali', email: 'm@x.test' } }, flash: {}, locale: 'en' } }),
         useForm: (data) => vue.reactive({ ...JSON.parse(JSON.stringify(data)), errors: globalThis.__errors ?? {}, hasErrors: Object.keys(globalThis.__errors ?? {}).length > 0, processing: false,
-            put(url) { globalThis.__put = { url, data: JSON.parse(JSON.stringify(this)) }; }, post() {}, delete() {}, clearErrors() {}, reset() {}, transform() { return this; } }),
+            put(url, options) { globalThis.__put = { url, options, data: JSON.parse(JSON.stringify(this)) }; }, post() {}, delete() {}, clearErrors() {}, reset() {}, transform() { return this; } }),
     };
 });
 vi.mock('@/pwa/register', () => ({ applyUpdate() {}, updateReady: { value: false }, registerServiceWorker() {} }));
@@ -98,6 +98,34 @@ describe('product screen: sales channels and export markets', () => {
         expect(rowOf(el.querySelector('table.stm'), 'Target sales value').textContent).toContain('129,240,000');
         // The product-level export price rows are replaced by the markets' prices.
         expect(el.innerHTML).not.toContain('Export price per unit');
+    });
+
+    it('the last row of the sales table is the total of local AND export, with both parts shown above it', async () => {
+        const el = await render(props());
+        const table = el.querySelector('table.stm');
+
+        expect(rowOf(table, 'Local sales value').textContent).toContain('62,400,000');
+        expect(rowOf(table, 'Export sales value').textContent).toContain('66,840,000');
+        expect(rowOf(table, 'Target sales value (local + export)').textContent).toContain('129,240,000');
+    });
+
+    it('with export switched off the table shows one total and no export row', async () => {
+        const el = await render(props({ salesSettings: settings({ hasExport: false }) }));
+        const table = el.querySelector('table.stm');
+
+        expect(rowOf(table, 'Export sales value')).toBeUndefined();
+        expect(rowOf(table, 'Target sales value').textContent).toContain('62,400,000');
+    });
+
+    it('Save and next builds the next product again from the server (the old figures are not kept)', async () => {
+        const el = await render(props());
+        button(el, 'Save and go to raw material payments')?.click() ?? [...el.querySelectorAll('button')].find((b) => /^Save and/.test(b.textContent.trim()) && b.textContent.includes('next'))?.click();
+        await nextTick();
+
+        const keep = globalThis.__put?.options?.preserveState;
+        expect(typeof keep).toBe('function');
+        expect(keep({ props: { errors: {} } })).toBe(false);                 // saved: show the server's figures, whatever product comes next
+        expect(keep({ props: { errors: { 'target_percentages.1': 'x' } } })).toBe(true);   // errors: keep what the user typed
     });
 
     it('shows a red total while a year does not add up to 100', async () => {
